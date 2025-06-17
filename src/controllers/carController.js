@@ -33,13 +33,23 @@ const getCarById = async (req, res) => {
 // Tạo xe mới
 const createCar = async (req, res) => {
     try {
-        const car = new Car(req.body);
+        const data = { ...req.body };
+
+        // Nếu các trường là chuỗi rỗng, thì bỏ đi hoặc set về undefined/null
+        ['mainWorker', 'subWorker', 'supervisor'].forEach(field => {
+            if (data[field] === '') {
+                data[field] = undefined; // hoặc delete data[field];
+            }
+        });
+
+        const car = new Car(data);
         await car.save();
         return res.status(201).json(car);
     } catch (error) {
         return res.status(400).json({ message: error.message });
     }
 };
+
 
 // Cập nhật thông tin xe
 const updateCar = async (req, res) => {
