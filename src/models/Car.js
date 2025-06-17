@@ -37,10 +37,14 @@ const carSchema = new Schema({
             return now.toISOString().slice(0, 10); // "2025-06-18"
         }
     },
-
     deliveryTime: {
         type: String,
         required: [true, 'Thời gian hẹn giao xe là bắt buộc']
+    },
+    status: {
+        type: String,
+        enum: ['working', 'done'], // thêm trạng thái
+        default: 'working'
     }
 }, { timestamps: true });
 

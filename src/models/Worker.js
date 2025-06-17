@@ -10,6 +10,11 @@ const workerSchema = new Schema({
         type: String,
         enum: ['thợ chính', 'thợ phụ'],
         required: [true, 'Vai trò thợ bắt buộc chọn']
+    },
+    status: {
+        type: String,
+        enum: ['busy', 'available'],
+        default: 'available'
     }
 }, { timestamps: true });
 

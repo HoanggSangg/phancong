@@ -17,4 +17,7 @@ router.put('/:id', carController.updateCar);
 // Xóa xe
 router.delete('/:id', carController.deleteCar);
 
+// ✅ Cập nhật trạng thái xe (ví dụ: done)
+router.put('/:id/status', carController.updateCarStatus);
+
 module.exports = router;

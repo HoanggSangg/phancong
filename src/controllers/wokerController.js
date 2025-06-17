@@ -1,4 +1,5 @@
 const Worker = require('../models/Worker');
+const Car = require('../models/Car');
 
 // Lấy tất cả thợ
 const getAllWorkers = async (req, res) => {
@@ -39,7 +40,10 @@ const createWorker = async (req, res) => {
 const updateWorker = async (req, res) => {
     const { id } = req.params;
     try {
-        const worker = await Worker.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
+        const worker = await Worker.findByIdAndUpdate(id, req.body, {
+            new: true,
+            runValidators: true
+        });
         if (!worker) {
             return res.status(404).json({ message: 'Thợ không tìm thấy' });
         }
@@ -62,6 +66,8 @@ const deleteWorker = async (req, res) => {
         return res.status(500).json({ message: error.message });
     }
 };
+
+// Lấy thợ chính
 const getMainWorkers = async (req, res) => {
     try {
         const mainWorkers = await Worker.find({ role: 'thợ chính' });
@@ -70,6 +76,8 @@ const getMainWorkers = async (req, res) => {
         return res.status(500).json({ message: error.message });
     }
 };
+
+// Lấy thợ phụ
 const getAssistantWorkers = async (req, res) => {
     try {
         const assistantWorkers = await Worker.find({ role: 'thợ phụ' });
@@ -78,6 +86,43 @@ const getAssistantWorkers = async (req, res) => {
         return res.status(500).json({ message: error.message });
     }
 };
+
+// ✅ Thợ đang rảnh
+const getAvailableWorkers = async (req, res) => {
+    try {
+        const workers = await Worker.find({ status: 'available' });
+        return res.status(200).json(workers);
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
+    }
+};
+
+// ✅ Thợ đang bận và xe đang làm
+const getBusyWorkersWithCars = async (req, res) => {
+    try {
+        const busyWorkers = await Worker.find({ status: 'busy' });
+
+        const workersWithCars = await Promise.all(busyWorkers.map(async (worker) => {
+            const cars = await Car.find({
+                status: { $ne: 'done' },
+                $or: [
+                    { mainWorker: worker._id },
+                    { subWorker: worker._id }
+                ]
+            }).select('plateNumber carType status');
+
+            return {
+                worker,
+                cars
+            };
+        }));
+
+        return res.status(200).json(workersWithCars);
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     getAllWorkers,
     getWorkerById,
@@ -85,5 +130,7 @@ module.exports = {
     updateWorker,
     deleteWorker,
     getMainWorkers,
-    getAssistantWorkers
+    getAssistantWorkers,
+    getAvailableWorkers,
+    getBusyWorkersWithCars
 };
