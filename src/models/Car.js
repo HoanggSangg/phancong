@@ -29,19 +29,17 @@ const carSchema = new Schema({
     ref: 'Supervisor'
   },
   currentTime: {
-    type: String,
-    default: () => {
-      const now = new Date();
-      return now.toLocaleTimeString('vi-VN', { hour12: false });
-    }
-  },
-  currentDate: {
-    type: String,
-    default: () => {
-      const now = new Date();
-      return now.toISOString().slice(0, 10);
-    }
-  },
+  type: String,
+  default: () => {
+    return moment().tz('Asia/Ho_Chi_Minh').format('HH:mm:ss');
+  }
+},
+currentDate: {
+  type: String,
+  default: () => {
+    return moment().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+  }
+},
   deliveryTime: {
     type: String,
     required: [true, 'Thời gian hẹn giao xe là bắt buộc']
