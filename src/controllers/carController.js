@@ -1,14 +1,15 @@
 const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
+const CateCar = require('../models/CateCar');
 
 // Lấy tất cả xe
 const getAllCars = async (req, res) => {
     try {
         const cars = await Car.find()
-            .populate('mainWorker', 'name')
-            .populate('subWorker', 'name')
-            .populate('supervisor', 'name');
+            .populate('workers.worker', 'name')
+            .populate('supervisor', 'name')
+            .populate('carType', 'name');
         return res.status(200).json(cars);
     } catch (error) {
         return res.status(500).json({ message: error.message });
@@ -20,9 +21,9 @@ const getCarById = async (req, res) => {
     const { id } = req.params;
     try {
         const car = await Car.findById(id)
-            .populate('mainWorker', 'name')
-            .populate('subWorker', 'name')
-            .populate('supervisor', 'name');
+            .populate('workers.worker', 'name')
+            .populate('supervisor', 'name')
+            .populate('carType', 'name');
         if (!car) {
             return res.status(404).json({ message: 'Xe không tìm thấy' });
         }
@@ -37,38 +38,29 @@ const createCar = async (req, res) => {
     try {
         const data = { ...req.body };
 
-        // Loại bỏ các trường rỗng
-        ['mainWorker', 'subWorker', 'supervisor'].forEach(field => {
-            if (data[field] === '') {
-                data[field] = undefined;
-            }
-        });
+        if (!Array.isArray(data.workers)) data.workers = [];
+        if (data.supervisor === '') data.supervisor = undefined;
 
-        // Danh sách lỗi nếu có thợ đã bận
+        // Kiểm tra carType hợp lệ
+        const cateCarExists = await CateCar.exists({ _id: data.carType });
+        if (!cateCarExists) {
+            return res.status(400).json({ message: 'Loại xe không hợp lệ' });
+        }
+
         const busyErrors = [];
 
-        const checkWorkerBusy = async (workerId, roleName) => {
-            if (!workerId) return;
-
+        for (const w of data.workers) {
+            const workerId = w.worker;
             const existingCar = await Car.findOne({
                 status: { $ne: 'done' },
-                $or: [
-                    { mainWorker: workerId },
-                    { subWorker: workerId }
-                ]
-            }).populate('mainWorker subWorker');
+                'workers.worker': workerId
+            }).populate('workers.worker');
 
             if (existingCar) {
-                const workerField = existingCar.mainWorker?._id.equals(workerId)
-                    ? 'mainWorker'
-                    : 'subWorker';
-                const name = existingCar[workerField]?.name || 'Không rõ';
-                busyErrors.push(`${roleName} "${name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
+                const worker = existingCar.workers.find(x => x.worker._id.equals(workerId));
+                busyErrors.push(`Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
             }
-        };
-
-        await checkWorkerBusy(data.mainWorker, 'Thợ chính');
-        await checkWorkerBusy(data.subWorker, 'Thợ phụ');
+        }
 
         if (busyErrors.length > 0) {
             return res.status(400).json({
@@ -77,20 +69,12 @@ const createCar = async (req, res) => {
             });
         }
 
-        // Tạo xe
         const car = new Car(data);
         await car.save();
 
-        // Cập nhật trạng thái thợ thành "busy"
-        const updateStatusToBusy = async (id, model) => {
-            if (id) {
-                await model.findByIdAndUpdate(id, { status: 'busy' });
-            }
-        };
-
-        await updateStatusToBusy(data.mainWorker, Worker);
-        await updateStatusToBusy(data.subWorker, Worker);
-        // Không cần cập nhật supervisor nữa
+        for (const w of data.workers) {
+            await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
+        }
 
         return res.status(201).json(car);
     } catch (error) {
@@ -98,17 +82,11 @@ const createCar = async (req, res) => {
     }
 };
 
-
 // Cập nhật thông tin xe
 const updateCar = async (req, res) => {
     const { id } = req.params;
-
-    // Loại bỏ các trường ObjectId có giá trị rỗng
-    ['mainWorker', 'subWorker', 'supervisor'].forEach(field => {
-        if (req.body[field] === '') {
-            req.body[field] = null;
-        }
-    });
+    if (!Array.isArray(req.body.workers)) req.body.workers = [];
+    if (req.body.supervisor === '') req.body.supervisor = null;
 
     try {
         const carBefore = await Car.findById(id);
@@ -116,50 +94,42 @@ const updateCar = async (req, res) => {
             return res.status(404).json({ message: 'Xe không tìm thấy' });
         }
 
-        const oldMainWorker = carBefore.mainWorker;
-        const oldSubWorker = carBefore.subWorker;
+        // Kiểm tra carType hợp lệ nếu được gửi lên
+        if (req.body.carType) {
+            const cateCarExists = await CateCar.exists({ _id: req.body.carType });
+            if (!cateCarExists) {
+                return res.status(400).json({ message: 'Loại xe không hợp lệ' });
+            }
+        }
 
-        // Cập nhật xe
+        const oldWorkers = carBefore.workers.map(w => w.worker.toString());
+        const newWorkers = req.body.workers.map(w => w.worker.toString());
+
+        const removedWorkers = oldWorkers.filter(w => !newWorkers.includes(w));
+        const addedWorkers = newWorkers.filter(w => !oldWorkers.includes(w));
+
         const updatedCar = await Car.findByIdAndUpdate(id, req.body, {
             new: true,
             runValidators: true
         });
 
-        // Nếu gỡ thợ chính
-        if (oldMainWorker && (!req.body.mainWorker || req.body.mainWorker.toString() !== oldMainWorker.toString())) {
+        for (const workerId of removedWorkers) {
             const stillHasJob = await Car.exists({
                 status: { $ne: 'done' },
-                $or: [{ mainWorker: oldMainWorker }, { subWorker: oldMainWorker }]
+                'workers.worker': workerId
             });
             if (!stillHasJob) {
-                await Worker.findByIdAndUpdate(oldMainWorker, { status: 'available' });
+                await Worker.findByIdAndUpdate(workerId, { status: 'available' });
             }
         }
 
-        // Nếu gỡ thợ phụ
-        if (oldSubWorker && (!req.body.subWorker || req.body.subWorker.toString() !== oldSubWorker.toString())) {
-            const stillHasJob = await Car.exists({
-                status: { $ne: 'done' },
-                $or: [{ mainWorker: oldSubWorker }, { subWorker: oldSubWorker }]
-            });
-            if (!stillHasJob) {
-                await Worker.findByIdAndUpdate(oldSubWorker, { status: 'available' });
-            }
-        }
-
-        // ✅ Nếu gán lại thợ → chuyển họ sang busy nếu đang available
-        const updateWorkerToBusyIfNeeded = async (workerId) => {
-            if (!workerId) return;
-            const worker = await Worker.findById(workerId);
-            if (worker && worker.status !== 'busy') {
-                await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-            }
-        };
-
-        // Chỉ cập nhật busy nếu xe chưa hoàn thành
         if (updatedCar.status !== 'done') {
-            await updateWorkerToBusyIfNeeded(updatedCar.mainWorker);
-            await updateWorkerToBusyIfNeeded(updatedCar.subWorker);
+            for (const workerId of addedWorkers) {
+                const worker = await Worker.findById(workerId);
+                if (worker && worker.status !== 'busy') {
+                    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
+                }
+            }
         }
 
         return res.status(200).json(updatedCar);
@@ -168,10 +138,7 @@ const updateCar = async (req, res) => {
     }
 };
 
-
-
-
-// Cập nhật trạng thái xe (ví dụ: done, working, etc.)
+// Cập nhật trạng thái xe
 const updateCarStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
@@ -186,34 +153,22 @@ const updateCarStatus = async (req, res) => {
         car.status = status;
         await car.save();
 
-        // Nếu từ "done" -> trạng thái khác: cập nhật thợ về busy
         if (oldStatus === 'done' && status !== 'done') {
-            const updateStatusToBusy = async (personId, model) => {
-                if (personId) {
-                    await model.findByIdAndUpdate(personId, { status: 'busy' });
-                }
-            };
-            await updateStatusToBusy(car.mainWorker, Worker);
-            await updateStatusToBusy(car.subWorker, Worker);
+            for (const w of car.workers) {
+                await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
+            }
         }
 
-        // Nếu chuyển sang done → cập nhật thợ về available nếu không còn xe nào chưa xong
         if (status === 'done') {
-            const updateStatusToAvailable = async (personId, model) => {
-                if (!personId) return;
+            for (const w of car.workers) {
                 const stillHasJob = await Car.exists({
                     status: { $ne: 'done' },
-                    $or: [
-                        { mainWorker: personId },
-                        { subWorker: personId }
-                    ]
+                    'workers.worker': w.worker
                 });
                 if (!stillHasJob) {
-                    await model.findByIdAndUpdate(personId, { status: 'available' });
+                    await Worker.findByIdAndUpdate(w.worker, { status: 'available' });
                 }
-            };
-            await updateStatusToAvailable(car.mainWorker, Worker);
-            await updateStatusToAvailable(car.subWorker, Worker);
+            }
         }
 
         return res.status(200).json({ message: `Trạng thái xe cập nhật thành ${status}.`, car });
@@ -221,8 +176,6 @@ const updateCarStatus = async (req, res) => {
         return res.status(500).json({ message: error.message });
     }
 };
-
-
 
 // Xóa xe
 const deleteCar = async (req, res) => {
@@ -233,23 +186,19 @@ const deleteCar = async (req, res) => {
             return res.status(404).json({ message: 'Xe không tìm thấy' });
         }
 
-        const updateStatusToAvailable = async (personId, model) => {
-            if (!personId) return;
-            const isStillBusy = await Car.exists({
-                $or: [
-                    { mainWorker: personId },
-                    { subWorker: personId },
-                    { supervisor: personId }
-                ]
-            });
-            if (!isStillBusy) {
-                await model.findByIdAndUpdate(personId, { status: 'available' });
+        for (const w of car.workers) {
+            const stillHasJob = await Car.exists({ 'workers.worker': w.worker });
+            if (!stillHasJob) {
+                await Worker.findByIdAndUpdate(w.worker, { status: 'available' });
             }
-        };
+        }
 
-        await updateStatusToAvailable(car.mainWorker, Worker);
-        await updateStatusToAvailable(car.subWorker, Worker);
-        await updateStatusToAvailable(car.supervisor, Supervisor);
+        if (car.supervisor) {
+            const stillHasJob = await Car.exists({ supervisor: car.supervisor });
+            if (!stillHasJob) {
+                await Supervisor.findByIdAndUpdate(car.supervisor, { status: 'available' });
+            }
+        }
 
         return res.status(200).json({ message: `Xe ${car.plateNumber} đã được xóa.` });
     } catch (error) {
@@ -257,7 +206,6 @@ const deleteCar = async (req, res) => {
     }
 };
 
-// Export các hàm
 module.exports = {
     getAllCars,
     getCarById,

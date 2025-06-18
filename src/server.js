@@ -5,6 +5,7 @@ const cors = require('cors');
 require('dotenv').config();
 
 // Import routes
+const cateCarRoutes = require('./routes/catecarRoutes');
 const wokerRoutes = require('./routes/wokerRoutes');
 const supervisorRoutes = require('./routes/supervisorRoutes');
 const carRoutes = require('./routes/carRoutes');
@@ -23,6 +24,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // Use routes
+app.use('/api/catecar', cateCarRoutes);
 app.use('/api/worker', wokerRoutes);
 app.use('/api/supervisors', supervisorRoutes);
 app.use('/api/cars', carRoutes);

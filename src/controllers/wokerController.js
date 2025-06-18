@@ -67,26 +67,6 @@ const deleteWorker = async (req, res) => {
     }
 };
 
-// Lấy thợ chính
-const getMainWorkers = async (req, res) => {
-    try {
-        const mainWorkers = await Worker.find({ role: 'thợ chính' });
-        return res.status(200).json(mainWorkers);
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
-
-// Lấy thợ phụ
-const getAssistantWorkers = async (req, res) => {
-    try {
-        const assistantWorkers = await Worker.find({ role: 'thợ phụ' });
-        return res.status(200).json(assistantWorkers);
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
-
 // ✅ Thợ đang rảnh
 const getAvailableWorkers = async (req, res) => {
     try {
@@ -129,8 +109,6 @@ module.exports = {
     createWorker,
     updateWorker,
     deleteWorker,
-    getMainWorkers,
-    getAssistantWorkers,
     getAvailableWorkers,
     getBusyWorkersWithCars
 };

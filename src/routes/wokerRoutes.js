@@ -16,12 +16,6 @@ const {
 // Lấy tất cả thợ
 router.get('/', getAllWorkers);
 
-// Lấy thợ chính
-router.get('/main', getMainWorkers);
-
-// Lấy thợ phụ
-router.get('/assistant', getAssistantWorkers);
-
 // Lấy thợ đang rảnh
 router.get('/available', getAvailableWorkers);
 
