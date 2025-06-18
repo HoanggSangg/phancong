@@ -3,6 +3,7 @@ const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
 const CateCar = require('../models/CateCar');
 const moment = require('moment-timezone');
+
 // Lấy tất cả xe
 const getAllCars = async (req, res) => {
     try {
@@ -41,7 +42,7 @@ const createCar = async (req, res) => {
         if (!Array.isArray(data.workers)) data.workers = [];
         if (data.supervisor === '') data.supervisor = undefined;
 
-        // ✅ Gán thời gian theo giờ Việt Nam
+        // Gán thời gian tạo theo giờ Việt Nam
         data.currentTime = moment().tz('Asia/Ho_Chi_Minh').format('HH:mm:ss');
         data.currentDate = moment().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
 
@@ -98,7 +99,6 @@ const updateCar = async (req, res) => {
             return res.status(404).json({ message: 'Xe không tìm thấy' });
         }
 
-        // Kiểm tra carType hợp lệ nếu được gửi lên
         if (req.body.carType) {
             const cateCarExists = await CateCar.exists({ _id: req.body.carType });
             if (!cateCarExists) {
