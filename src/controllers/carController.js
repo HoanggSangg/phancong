@@ -2,7 +2,7 @@ const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
 const CateCar = require('../models/CateCar');
-
+const moment = require('moment-timezone');
 // Lấy tất cả xe
 const getAllCars = async (req, res) => {
     try {
@@ -40,6 +40,10 @@ const createCar = async (req, res) => {
 
         if (!Array.isArray(data.workers)) data.workers = [];
         if (data.supervisor === '') data.supervisor = undefined;
+
+        // ✅ Gán thời gian theo giờ Việt Nam
+        data.currentTime = moment().tz('Asia/Ho_Chi_Minh').format('HH:mm:ss');
+        data.currentDate = moment().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
 
         // Kiểm tra carType hợp lệ
         const cateCarExists = await CateCar.exists({ _id: data.carType });
