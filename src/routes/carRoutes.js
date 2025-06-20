@@ -14,6 +14,9 @@ router.get('/by-location/:locationId', carController.getCarsByLocation);
 // ✅ Lấy xe theo biển số (phải đặt TRƯỚC '/:id' để không bị ăn nhầm)
 router.get('/by-plate/:plateNumber', carController.getCarByPlateNumber);
 
+// ✅ Lấy danh sách xe trễ hẹn (phải đặt TRƯỚC '/:id')
+router.get('/overdue', carController.getOverdueCars);
+
 // ✅ Lấy tất cả xe
 router.get('/', carController.getAllCars);
 
