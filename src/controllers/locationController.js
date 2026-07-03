@@ -57,6 +57,8 @@ exports.deleteLocation = async (req, res) => {
             return res.status(404).json({ message: 'Không tìm thấy địa điểm' });
         }
 
+        req.auditDeleted = { name: deleted.name };
+
         res.json({ message: 'Xóa địa điểm thành công' });
     } catch (error) {
         res.status(500).json({ message: 'Lỗi khi xóa địa điểm', error });

@@ -60,6 +60,9 @@ const deleteSupervisor = async (req, res) => {
         if (!supervisor) {
             return res.status(404).json({ message: 'Người giám sát không tìm thấy' });
         }
+
+        req.auditDeleted = { name: supervisor.name };
+
         return res.status(200).json({ message: `Đã xóa người giám sát: ${supervisor.name}` });
     } catch (error) {
         return res.status(500).json({ message: error.message });

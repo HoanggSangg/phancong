@@ -1,17 +1,52 @@
-const Car = require('../models/Car');
+﻿const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
-const CateCar = require('../models/CateCar');
+const RepairOrderItem = require('../models/RepairOrderItem');
 const Location = require('../models/Location');
+const Wokers = require('../models/Wokers');
+const { fetchRepairDetailsForCar } = require('./externalController');
 const moment = require('moment-timezone');
+const {
+  isDateInRange,
+  buildWorkerRevenuesForItem,
+  getItemWorkerAssignments,
+  getRevenueForWorkerFromItem,
+  getItemRevenueDate,
+} = require('../utils/revenue');
+const {
+  repairItemsForWorkerQuery,
+  buildCountRevenueMap,
+  resolveRepairHistoryWorkerFilter,
+} = require('../utils/revenueHelpers');
+
+const mapExternalItemToRepairOrder = (item, car) => ({
+  car: car._id,
+  plateNumber: car.plateNumber,
+  roCode: car.roCode || '',
+  roNumber: car.roNumber || '',
+  groupName: item.khoanMucSuaChua || 'Khác',
+  content: item.noiDung || '',
+  quantity: item.soLuong || 1,
+  unit: item.donViTinh || '',
+  unitPrice: item.donGia || 0,
+  amount: item.thanhTien || 0,
+  taxRate: item.tyLeThue || 0,
+  taxAmount: item.tienThue || 0,
+  discountRate: item.tyLeChietKhau || 0,
+  discountAmount: item.tienChietKhau || 0,
+  serviceType: item.loaiDichVu || '',
+  itemType: item.loai || 0,
+  externalItemId: item.khoa || '',
+  raw: item,
+});
+
 
 // Lấy tất cả xe
 const getAllCars = async (req, res) => {
   try {
-    const cars = await Car.find()
+    const cars = await Car.find({})
       .populate('workers.worker', 'name')
       .populate('supervisor', 'name')
-      .populate('carType', 'name')
       .populate('location', 'name');
 
     res.json(cars);
@@ -27,7 +62,6 @@ const getCarById = async (req, res) => {
     const car = await Car.findById(req.params.id)
       .populate('workers.worker', 'name')
       .populate('supervisor', 'name')
-      .populate('carType', 'name')
       .populate('location', 'name');
 
     if (!car) {
@@ -41,176 +75,13 @@ const getCarById = async (req, res) => {
 };
 
 
-// Tạo xe mới
-// const createCar = async (req, res) => {
-//     try {
-//         const data = { ...req.body };
 
-//         if (!Array.isArray(data.workers)) data.workers = [];
-//         if (data.supervisor === '') data.supervisor = undefined;
-
-//         // Gán thời gian tạo theo giờ Việt Nam
-//         const now = moment().tz('Asia/Ho_Chi_Minh');
-//         data.currentTime = now.format('HH:mm:ss');
-//         data.currentDate = now.format('YYYY-MM-DD');
-
-//         // Kiểm tra carType hợp lệ
-//         const cateCarExists = await CateCar.exists({ _id: data.carType });
-//         if (!cateCarExists) {
-//             return res.status(400).json({ message: 'Loại xe không hợp lệ' });
-//         }
-
-//         // ❗ Kiểm tra biển số đã tồn tại trong ngày hôm nay chưa
-//         const isPlateExistToday = await Car.findOne({
-//             plateNumber: data.plateNumber,
-//             currentDate: data.currentDate,
-//         });
-
-//         if (isPlateExistToday) {
-//             return res.status(400).json({
-//                 message: `Xe với biển số ${data.plateNumber} đã được tạo trong ngày hôm nay`,
-//             });
-//         }
-
-//         // Kiểm tra thợ có đang bận hay không
-//         const busyErrors = [];
-
-//         for (const w of data.workers) {
-//             const workerId = w.worker;
-
-//             const existingCar = await Car.findOne({
-//                 status: 'working',
-//                 'workers.worker': workerId,
-//             }).populate('workers.worker');
-
-//             if (existingCar) {
-//                 const worker = existingCar.workers.find(x => x.worker._id.equals(workerId));
-//                 busyErrors.push(`Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
-//             }
-//         }
-
-//         if (busyErrors.length > 0) {
-//             return res.status(400).json({
-//                 message: 'Không thể tạo xe vì có thợ đang bận:',
-//                 errors: busyErrors,
-//             });
-//         }
-
-//         // Tạo xe mới
-//         const car = new Car(data);
-//         await car.save();
-
-//         // Nếu xe này là working thì cập nhật trạng thái thợ thành busy
-//         if (car.status === 'working') {
-//             for (const w of data.workers) {
-//                 await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
-//             }
-//         }
-
-//         return res.status(201).json(car);
-//     } catch (error) {
-//         console.error('Lỗi tạo xe:', error);
-//         return res.status(400).json({ message: error.message });
-//     }
-// };
-// const createCar = async (req, res) => {
-//   try {
-//     const data = { ...req.body };
-
-//     if (!Array.isArray(data.workers)) data.workers = [];
-//     if (data.supervisor === '') data.supervisor = undefined;
-
-//     const now = moment().tz('Asia/Ho_Chi_Minh');
-//     data.currentTime = now.format('HH:mm:ss');
-//     data.currentDate = now.format('YYYY-MM-DD');
-
-//     // Kiểm tra loại xe
-//     const cateCarExists = await CateCar.exists({ _id: data.carType });
-//     if (!cateCarExists) {
-//       return res.status(400).json({ message: 'Loại xe không hợp lệ' });
-//     }
-
-//     // Kiểm tra biển số trong ngày
-//     const isPlateExistToday = await Car.findOne({
-//       plateNumber: data.plateNumber,
-//       currentDate: data.currentDate,
-//     });
-
-//     if (isPlateExistToday) {
-//       return res.status(400).json({
-//         message: `Xe với biển số ${data.plateNumber} đã được tạo trong ngày hôm nay`,
-//       });
-//     }
-
-//     // ✅ Kiểm tra location
-//     if (!data.location) {
-//       return res.status(400).json({ message: 'Địa điểm là bắt buộc' });
-//     }
-//     const locationExists = await Location.exists({ _id: data.location });
-//     if (!locationExists) {
-//       return res.status(400).json({ message: 'Địa điểm không hợp lệ' });
-//     }
-
-//     // ✅ Kiểm tra và chuẩn hóa deliveryTime
-//     if (data.deliveryTime) {
-//       const original = data.deliveryTime.trim();
-//       const normalized = original.replace(/\[?h\]?/, '').trim();
-
-//       const isValid = moment(normalized, 'DD-MM-YYYY HH', true).isValid();
-//       if (!isValid) {
-//         return res.status(400).json({
-//           message: 'Thời gian giao không hợp lệ (định dạng: DD-MM-YYYY HH[h])',
-//         });
-//       }
-
-//       // Lưu chuẩn format có [h]
-//       data.deliveryTime = moment(normalized, 'DD-MM-YYYY HH').format('DD-MM-YYYY HH') + '[h]';
-//     }
-
-//     // ✅ Kiểm tra thợ có đang bận không
-//     const busyErrors = [];
-
-//     for (const w of data.workers) {
-//       const workerId = w.worker;
-
-//       const existingCar = await Car.findOne({
-//         status: 'working',
-//         'workers.worker': workerId,
-//       }).populate('workers.worker');
-
-//       if (existingCar) {
-//         const worker = existingCar.workers.find(x => x.worker._id.equals(workerId));
-//         busyErrors.push(`Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
-//       }
-//     }
-
-//     if (busyErrors.length > 0) {
-//       return res.status(400).json({
-//         message: 'Không thể tạo xe vì có thợ đang bận:',
-//         errors: busyErrors,
-//       });
-//     }
-
-//     // ✅ Lưu xe
-//     const car = new Car(data);
-//     await car.save();
-
-//     // ✅ Cập nhật trạng thái thợ nếu xe đang "working"
-//     if (car.status === 'working') {
-//       for (const w of data.workers) {
-//         await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
-//       }
-//     }
-
-//     return res.status(201).json(car);
-//   } catch (error) {
-//     console.error('Lỗi tạo xe:', error);
-//     return res.status(400).json({ message: error.message });
-//   }
-// };
 const createCar = async (req, res) => {
   try {
     const data = { ...req.body };
+
+    const repairItems = Array.isArray(data.repairItems) ? data.repairItems : [];
+    delete data.repairItems;
 
     if (!Array.isArray(data.workers)) data.workers = [];
     if (data.supervisor === '') data.supervisor = undefined;
@@ -219,11 +90,15 @@ const createCar = async (req, res) => {
     data.currentTime = now.format('HH:mm:ss');
     data.currentDate = now.format('YYYY-MM-DD');
 
-    // Kiểm tra loại xe
-    const cateCarExists = await CateCar.exists({ _id: data.carType });
-    if (!cateCarExists) {
-      return res.status(400).json({ message: 'Loại xe không hợp lệ' });
+    // ✅ Loại xe luôn lấy từ dữ liệu API (externalCarTypeName)
+    const externalCarTypeName = String(data.externalCarTypeName || '').trim();
+
+    if (!externalCarTypeName) {
+      return res.status(400).json({ message: 'Thiếu loại xe từ dữ liệu API' });
     }
+
+    data.externalCarTypeName = externalCarTypeName;
+    delete data.carType;
 
     // Kiểm tra biển số trong ngày
     const isPlateExistToday = await Car.findOne({
@@ -237,13 +112,12 @@ const createCar = async (req, res) => {
       });
     }
 
-    // ✅ Kiểm tra location
-    if (!data.location) {
-      return res.status(400).json({ message: 'Địa điểm là bắt buộc' });
-    }
-    const locationExists = await Location.exists({ _id: data.location });
-    if (!locationExists) {
-      return res.status(400).json({ message: 'Địa điểm không hợp lệ' });
+    // ✅ Địa điểm không bắt buộc, chỉ kiểm tra nếu có gửi lên
+    if (data.location) {
+      const locationExists = await Location.exists({ _id: data.location });
+      if (!locationExists) {
+        return res.status(400).json({ message: 'Địa điểm không hợp lệ' });
+      }
     }
 
     // ✅ Kiểm tra và chuẩn hóa deliveryTime
@@ -302,11 +176,53 @@ const createCar = async (req, res) => {
     const car = new Car(data);
     await car.save();
 
-    // ✅ Cập nhật trạng thái thợ nếu xe đang "working"
-    if (car.status === 'working') {
+    if (repairItems.length > 0) {
+      await RepairOrderItem.deleteMany({
+        car: car._id,
+      });
+
+      await RepairOrderItem.insertMany(
+        repairItems.map((item) => ({
+          car: car._id,
+          plateNumber: car.plateNumber,
+          roCode: data.roCode || '',
+          roNumber: data.roNumber || '',
+          groupName: item.groupName || '',
+          content: item.content || '',
+          quantity: Number(item.quantity || 1),
+          unit: item.unit || '',
+          unitPrice: Number(item.unitPrice || 0),
+          amount: Number(item.amount || 0),
+          taxRate: Number(item.taxRate || 0),
+          taxAmount: Number(item.taxAmount || 0),
+          discountRate: Number(item.discountRate || 0),
+          discountAmount: Number(item.discountAmount || 0),
+          serviceType: item.serviceType || '',
+          itemType: Number(item.itemType || 0),
+          externalItemId: item.externalItemId || '',
+          raw: item.raw || null,
+        }))
+      );
+    }
+
+    // ✅ Sau khi thêm xe có thợ: cập nhật trạng thái thợ và tạo bản ghi Wokers
+    if (data.workers.length > 0) {
+      const vieclamChiTiet = repairItems.length > 0
+        ? repairItems.map((item) => item.content).filter(Boolean).join('; ')
+        : '';
+
       for (const w of data.workers) {
         await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
       }
+
+      await Wokers.insertMany(
+        data.workers.map((w) => ({
+          worker: w.worker,
+          car: car._id,
+          vieclamChiTiet,
+          status: 'co_viec',
+        }))
+      );
     }
 
     return res.status(201).json(car);
@@ -322,6 +238,7 @@ const updateCar = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Kiểm tra location
     if (req.body.location) {
       const locationExists = await Location.exists({ _id: req.body.location });
       if (!locationExists) {
@@ -329,672 +246,648 @@ const updateCar = async (req, res) => {
       }
     }
 
+    // Kiểm tra deliveryTime
     if (req.body.deliveryTime && !moment(req.body.deliveryTime, 'DD-MM-YYYY HH[h]', true).isValid()) {
       return res.status(400).json({ message: 'Thời gian giao không hợp lệ (định dạng: DD-MM-YYYY HH[h])' });
     }
 
-    const updatedCar = await Car.findByIdAndUpdate(id, req.body, {
-      new: true,
-    });
-
-    if (!updatedCar) {
+    // Lấy thông tin xe trước khi cập nhật
+    const car = await Car.findById(id);
+    if (!car) {
       return res.status(404).json({ message: 'Không tìm thấy xe' });
     }
 
+    // Nếu có cập nhật workers
+    if (req.body.workers) {
+      const newWorkerIds = req.body.workers.map(w => w.worker.toString());
+      const oldWorkerIds = car.workers.map(w => w.worker.toString());
+
+      const removed = oldWorkerIds.filter(id => !newWorkerIds.includes(id));
+      const added = newWorkerIds.filter(id => !oldWorkerIds.includes(id));
+
+      for (const wid of removed) {
+        car.workerLogs.push({
+          worker: wid,
+          action: 'removed',
+          note: 'Thợ bị gỡ khi cập nhật thông tin xe',
+          timestamp: new Date()
+        });
+
+        // ✅ Đặt trạng thái thợ thành 'available'
+        await Worker.findByIdAndUpdate(wid, { status: 'available' });
+
+        // ✅ Đóng công việc của thợ với xe này
+        await Wokers.updateMany(
+          { worker: wid, car: car._id, status: 'co_viec' },
+          { status: 'chua_co_viec' }
+        );
+      }
+
+      for (const wid of added) {
+        car.workerLogs.push({
+          worker: wid,
+          action: 'added',
+          note: 'Thợ được thêm khi cập nhật thông tin xe',
+          timestamp: new Date()
+        });
+
+        // ✅ Đặt trạng thái thợ thành 'busy'
+        await Worker.findByIdAndUpdate(wid, { status: 'busy' });
+
+        // ✅ Mở công việc mới cho thợ với xe này
+        await Wokers.create({
+          worker: wid,
+          car: car._id,
+          status: 'co_viec',
+        });
+      }
+
+      // Gán lại để tránh bị mất
+      car.workers = req.body.workers;
+      delete req.body.workers;
+    }
+
+    // Không cho cập nhật loại xe qua CateCar nữa
+    delete req.body.carType;
+
+    // Cập nhật các trường khác
+    Object.assign(car, req.body);
+
+    // Lưu lại
+    const updatedCar = await car.save();
+
     res.json(updatedCar);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Lỗi khi cập nhật xe:', error);
+    res.status(500).json({ message: 'Lỗi server', error: error.message });
   }
 };
 
 
-
-// const updateCarStatus = async (req, res) => {
-//     const { id } = req.params;
-//     const { status, newWorkerId } = req.body; // Thêm newWorkerId để chọn thợ mới
-
-//     try {
-//         const car = await Car.findById(id).populate('workers.worker');
-//         if (!car) return res.status(404).json({ message: 'Xe không tìm thấy' });
-
-//         const currentStatus = car.status;
-//         const carWorkerIds = car.workers.map(w => w.worker._id.toString());
-
-//         // **LOGIC MỚI: KIỂM TRA CHUYỂN TRẠNG THÁI HỢP LỆ**
-        
-//         // 1. Từ done chỉ có thể chuyển sang waiting_wash hoặc waiting_handover
-//         if (currentStatus === 'done' && !['waiting_wash', 'waiting_handover'].includes(status)) {
-//             return res.status(400).json({
-//                 message: 'Từ trạng thái "sửa xong" chỉ có thể chuyển sang "chờ rửa xe" hoặc "chờ giao xe"'
-//             });
-//         }
-
-//         // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_WASH**
-//         if (currentStatus === 'done' && status === 'waiting_wash') {
-//             // Nếu có newWorkerId => chọn thợ mới rửa xe
-//             if (newWorkerId) {
-//                 const newWorker = await Worker.findById(newWorkerId);
-//                 if (!newWorker) {
-//                     return res.status(404).json({ message: 'Thợ mới không tồn tại' });
-//                 }
-
-//                 if (newWorker.status === 'busy') {
-//                     return res.status(400).json({
-//                         message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
-//                     });
-//                 }
-
-//                 // Cập nhật thợ mới cho xe
-//                 car.workers = [{
-//                     worker: newWorkerId,
-//                     role: 'main'
-//                 }];
-
-//                 // Thợ mới bận
-//                 await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-//                 // Thợ cũ rảnh (vì đã được thay thế)
-//                 for (const oldWorkerId of carWorkerIds) {
-//                     const allCarsOfOldWorker = await Car.find({ 
-//                         'workers.worker': oldWorkerId,
-//                         _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
-//                     });
-//                     const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-//                     const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-//                     if (hasWorking) {
-//                         await Worker.findByIdAndUpdate(oldWorkerId, { status: 'busy' });
-//                     } else if (hasPending) {
-//                         await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-//                     } else {
-//                         await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-//                     }
-//                 }
-
-//                 car.status = status;
-//                 await car.save();
-
-//                 return res.status(200).json({ 
-//                     message: 'Chuyển sang chờ rửa xe với thợ mới thành công', 
-//                     car: await Car.findById(id).populate('workers.worker')
-//                 });
-//             } else {
-//                 // **FIX: Nếu không có newWorkerId => giữ thợ cũ rửa xe, thợ cũ vẫn BUSY**
-//                 // Không thay đổi workers, chỉ đổi status
-//                 car.status = status;
-//                 await car.save();
-
-//                 // Thợ cũ vẫn bận vì phải rửa xe
-//                 for (const workerId of carWorkerIds) {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-//                 }
-
-//                 return res.status(200).json({ 
-//                     message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công', 
-//                     car: await Car.findById(id).populate('workers.worker')
-//                 });
-//             }
-//         }
-
-//         // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_HANDOVER**
-//         if (currentStatus === 'done' && status === 'waiting_handover') {
-//             // Thợ cũ rảnh vì không cần làm gì thêm
-//             for (const workerId of carWorkerIds) {
-//                 const allCarsOfWorker = await Car.find({ 
-//                     'workers.worker': workerId,
-//                     _id: { $ne: car._id } // bỏ qua xe hiện tại
-//                 });
-//                 const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-//                 const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-//                 if (hasWorking) {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-//                 } else if (hasPending) {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-//                 } else {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-//                 }
-//             }
-
-//             car.status = status;
-//             await car.save();
-
-//             return res.status(200).json({ 
-//                 message: 'Chuyển sang chờ giao xe thành công', 
-//                 car: await Car.findById(id).populate('workers.worker')
-//             });
-//         }
-
-//         // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH HOẶC WAITING_HANDOVER SANG ADDITIONAL_REPAIR**
-//         if (['waiting_wash', 'waiting_handover'].includes(currentStatus) && status === 'additional_repair') {
-//             if (!newWorkerId) {
-//                 return res.status(400).json({
-//                     message: 'Cần chọn thợ mới cho sửa bổ sung'
-//                 });
-//             }
-
-//             // Kiểm tra thợ mới có rảnh không
-//             const newWorker = await Worker.findById(newWorkerId);
-//             if (!newWorker) {
-//                 return res.status(404).json({ message: 'Thợ mới không tồn tại' });
-//             }
-
-//             if (newWorker.status === 'busy') {
-//                 return res.status(400).json({
-//                     message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
-//                 });
-//             }
-
-//             // Lưu lại thợ cũ để cập nhật trạng thái
-//             const oldWorkerIds = [...carWorkerIds];
-
-//             // Cập nhật thợ mới cho xe
-//             car.workers = [{
-//                 worker: newWorkerId,
-//                 role: 'main'
-//             }];
-
-//             // Thợ mới bận
-//             await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-//             // Thợ cũ rảnh (vì đã được thay thế)
-//             for (const oldWorkerId of oldWorkerIds) {
-//                 const allCarsOfOldWorker = await Car.find({ 
-//                     'workers.worker': oldWorkerId,
-//                     _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
-//                 });
-//                 const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-//                 const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-//                 if (hasWorking) {
-//                     await Worker.findByIdAndUpdate(oldWorkerId, { status: 'busy' });
-//                 } else if (hasPending) {
-//                     await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-//                 } else {
-//                     await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-//                 }
-//             }
-
-//             car.status = status;
-//             await car.save();
-
-//             return res.status(200).json({ 
-//                 message: 'Chuyển sang sửa bổ sung với thợ mới thành công', 
-//                 car: await Car.findById(id).populate('workers.worker')
-//             });
-//         }
-
-//         // **LOGIC MỚI: XỬ LÝ CHUYỂN SANG DELIVERED**
-//         if (status === 'delivered') {
-//             // Tất cả thợ liên quan đều rảnh
-//             for (const workerId of carWorkerIds) {
-//                 const allCarsOfWorker = await Car.find({ 
-//                     'workers.worker': workerId,
-//                     _id: { $ne: car._id } // bỏ qua xe hiện tại
-//                 });
-//                 const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-//                 const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-//                 if (hasWorking) {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-//                 } else if (hasPending) {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-//                 } else {
-//                     await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-//                 }
-//             }
-
-//             car.status = status;
-//             await car.save();
-
-//             return res.status(200).json({ 
-//                 message: 'Xe đã được giao thành công', 
-//                 car: await Car.findById(id).populate('workers.worker')
-//             });
-//         }
-
-//         // **LOGIC CŨ: Nếu muốn đổi sang "working", kiểm tra thợ có đang bận không**
-//         if (status === 'working') {
-//             for (const workerId of carWorkerIds) {
-//                 const otherWorkingCars = await Car.findOne({
-//                     _id: { $ne: car._id }, // bỏ qua xe hiện tại
-//                     'workers.worker': workerId,
-//                     status: 'working',
-//                 });
-
-//                 if (otherWorkingCars) {
-//                     // Lấy tên thợ để hiển thị thông báo
-//                     const worker = await Worker.findById(workerId);
-//                     return res.status(400).json({
-//                         message: `Không thể chuyển sang 'working'. Thợ ${worker?.name || 'không rõ'} đang sửa xe khác.`,
-//                     });
-//                 }
-//             }
-//         }
-
-//         // **LOGIC CŨ: Nếu vượt qua được kiểm tra thì cập nhật trạng thái**
-//         car.status = status;
-//         await car.save();
-
-//         // **LOGIC CŨ: Cập nhật trạng thái thợ**
-//         for (const workerId of carWorkerIds) {
-//             const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
-
-//             const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-//             const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-//             const hasWaitingWash = allCarsOfWorker.some(c => c.status === 'waiting_wash');
-//             const hasAdditionalRepair = allCarsOfWorker.some(c => c.status === 'additional_repair');
-
-//             if (hasWorking || hasWaitingWash || hasAdditionalRepair) {
-//                 await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-//             } else if (hasPending) {
-//                 await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-//             } else {
-//                 await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-//             }
-//         }
-
-//         const updatedCar = await Car.findById(id).populate('workers.worker');
-//         return res.status(200).json({ 
-//             message: `Cập nhật trạng thái xe thành công: ${status}`, 
-//             car: updatedCar 
-//         });
-//     } catch (error) {
-//         return res.status(500).json({ message: error.message });
-//     }
-// };
-
 const updateCarStatus = async (req, res) => {
-    const { id } = req.params;
-    const { status, newWorkerId } = req.body; // Thêm newWorkerId để chọn thợ mới
+  const { id } = req.params;
+  const { status, newWorkerId } = req.body; // Thêm newWorkerId để chọn thợ mới
 
-    try {
-        const car = await Car.findById(id).populate('workers.worker');
-        if (!car) return res.status(404).json({ message: 'Xe không tìm thấy' });
+  try {
+    const car = await Car.findById(id).populate('workers.worker');
+    if (!car) return res.status(404).json({ message: 'Xe không tìm thấy' });
 
-        const currentStatus = car.status;
-        const carWorkerIds = car.workers.map(w => w.worker._id.toString());
+    const currentStatus = car.status;
+    const carWorkerIds = car.workers.map(w => w.worker._id.toString());
 
-        // **LOGIC MỚI: KIỂM TRA CHUYỂN TRẠNG THÁI HỢP LỆ**
-        
-        // 1. Từ done chỉ có thể chuyển sang waiting_wash hoặc waiting_handover
-        if (currentStatus === 'done' && !['waiting_wash', 'waiting_handover'].includes(status)) {
-            return res.status(400).json({
-                message: 'Từ trạng thái "sửa xong" chỉ có thể chuyển sang "chờ rửa xe" hoặc "chờ giao xe"'
+    // **LOGIC MỚI: KIỂM TRA CHUYỂN TRẠNG THÁI HỢP LỆ**
+
+    // 1. Từ done chỉ có thể chuyển sang waiting_wash hoặc waiting_handover
+    // if (currentStatus === 'done' && !['waiting_wash', 'waiting_handover'].includes(status)) {
+    //   return res.status(400).json({
+    //     message: 'Từ trạng thái "sửa xong" chỉ có thể chuyển sang "chờ rửa xe" hoặc "chờ giao xe"'
+    //   });
+    // }
+    if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
+      const oldWorkerIds = [...carWorkerIds];
+
+      // Có chọn thợ/tài xế giao xe
+      if (newWorkerId) {
+        const handoverWorker = await Worker.findById(newWorkerId);
+
+        if (!handoverWorker) {
+          return res.status(404).json({
+            message: 'Thợ hoặc tài xế giao xe không tồn tại'
+          });
+        }
+
+        const isOldWorker = oldWorkerIds.includes(newWorkerId.toString());
+
+        if (handoverWorker.status === 'busy' && !isOldWorker) {
+          return res.status(400).json({
+            message: `Không thể chọn ${handoverWorker.name}. Người này đang bận.`
+          });
+        }
+
+        for (const oldWorkerId of oldWorkerIds) {
+          if (oldWorkerId !== newWorkerId.toString()) {
+            car.workerLogs.push({
+              worker: oldWorkerId,
+              action: 'removed',
+              note: 'Rửa xe xong, chuyển sang chờ giao xe',
+              timestamp: new Date()
             });
+          }
         }
 
-        // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_WASH**
-        if (currentStatus === 'done' && status === 'waiting_wash') {
-            // Nếu có newWorkerId => chọn thợ mới rửa xe
-            if (newWorkerId) {
-                const newWorker = await Worker.findById(newWorkerId);
-                if (!newWorker) {
-                    return res.status(404).json({ message: 'Thợ mới không tồn tại' });
-                }
+        car.workerLogs.push({
+          worker: newWorkerId,
+          action: 'added',
+          note: 'Người giao xe được gán sau khi rửa xe xong',
+          timestamp: new Date()
+        });
 
-                if (newWorker.status === 'busy') {
-                    return res.status(400).json({
-                        message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
-                    });
-                }
+        car.workers = [{
+          worker: newWorkerId,
+          role: 'main'
+        }];
 
-                // Cập nhật thợ mới cho xe
-                car.workers = [{
-                    worker: newWorkerId,
-                    role: 'main'
-                }];
-
-                // Thợ mới bận
-                await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-                // Thợ cũ rảnh (vì đã được thay thế)
-                for (const oldWorkerId of carWorkerIds) {
-                    const allCarsOfOldWorker = await Car.find({ 
-                        'workers.worker': oldWorkerId,
-                        _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
-                    });
-                    const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-                    const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-                    if (hasWorking) {
-                        await Worker.findByIdAndUpdate(oldWorkerId, { status: 'busy' });
-                    } else if (hasPending) {
-                        await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-                    } else {
-                        await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-                    }
-                }
-
-                car.status = status;
-                await car.save();
-
-                return res.status(200).json({ 
-                    message: 'Chuyển sang chờ rửa xe với thợ mới thành công', 
-                    car: await Car.findById(id).populate('workers.worker')
-                });
-            } else {
-                // **FIX: Nếu không có newWorkerId => giữ thợ cũ rửa xe, thợ cũ vẫn BUSY**
-                // Không thay đổi workers, chỉ đổi status
-                car.status = status;
-                await car.save();
-
-                // Thợ cũ vẫn bận vì phải rửa xe
-                for (const workerId of carWorkerIds) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-                }
-
-                return res.status(200).json({ 
-                    message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công', 
-                    car: await Car.findById(id).populate('workers.worker')
-                });
-            }
-        }
-
-        // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_HANDOVER**
-        if (currentStatus === 'done' && status === 'waiting_handover') {
-            // Thợ cũ rảnh vì không cần làm gì thêm
-            for (const workerId of carWorkerIds) {
-                const allCarsOfWorker = await Car.find({ 
-                    'workers.worker': workerId,
-                    _id: { $ne: car._id } // bỏ qua xe hiện tại
-                });
-                const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-                const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-                if (hasWorking) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-                } else if (hasPending) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-                } else {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-                }
-            }
-
-            car.status = status;
-            await car.save();
-
-            return res.status(200).json({ 
-                message: 'Chuyển sang chờ giao xe thành công', 
-                car: await Car.findById(id).populate('workers.worker')
-            });
-        }
-
-        // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH SANG WAITING_HANDOVER**
-        if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
-            // Rửa xe xong, thợ rảnh
-            for (const workerId of carWorkerIds) {
-                const allCarsOfWorker = await Car.find({ 
-                    'workers.worker': workerId,
-                    _id: { $ne: car._id } // bỏ qua xe hiện tại
-                });
-                const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-                const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-                if (hasWorking) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-                } else if (hasPending) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-                } else {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-                }
-            }
-
-            car.status = status;
-            await car.save();
-
-            return res.status(200).json({ 
-                message: 'Rửa xe xong, chuyển sang chờ giao xe thành công', 
-                car: await Car.findById(id).populate('workers.worker')
-            });
-        }
-
-        // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH SANG ADDITIONAL_REPAIR**
-        if (currentStatus === 'waiting_wash' && status === 'additional_repair') {
-            if (!newWorkerId) {
-                return res.status(400).json({
-                    message: 'Cần chọn thợ mới cho sửa bổ sung'
-                });
-            }
-
-            // Kiểm tra thợ mới có rảnh không
-            const newWorker = await Worker.findById(newWorkerId);
-            if (!newWorker) {
-                return res.status(404).json({ message: 'Thợ mới không tồn tại' });
-            }
-
-            if (newWorker.status === 'busy') {
-                return res.status(400).json({
-                    message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
-                });
-            }
-
-            // Lưu lại thợ cũ để cập nhật trạng thái
-            const oldWorkerIds = [...carWorkerIds];
-
-            // Cập nhật thợ mới cho xe
-            car.workers = [{
-                worker: newWorkerId,
-                role: 'main'
-            }];
-
-            // Thợ mới bận
-            await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-            // Thợ cũ rảnh (vì đã được thay thế)
-            for (const oldWorkerId of oldWorkerIds) {
-                const allCarsOfOldWorker = await Car.find({ 
-                    'workers.worker': oldWorkerId,
-                    _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
-                });
-                const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-                const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-                if (hasWorking) {
-                    await Worker.findByIdAndUpdate(oldWorkerId, { status: 'busy' });
-                } else if (hasPending) {
-                    await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-                } else {
-                    await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-                }
-            }
-
-            car.status = status;
-            await car.save();
-
-            return res.status(200).json({ 
-                message: 'Chuyển sang sửa bổ sung với thợ mới thành công', 
-                car: await Car.findById(id).populate('workers.worker')
-            });
-        }
-
-        // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_HANDOVER SANG ADDITIONAL_REPAIR**
-        if (currentStatus === 'waiting_handover' && status === 'additional_repair') {
-            if (!newWorkerId) {
-                return res.status(400).json({
-                    message: 'Cần chọn thợ mới cho sửa bổ sung'
-                });
-            }
-
-            // Kiểm tra thợ mới có rảnh không
-            const newWorker = await Worker.findById(newWorkerId);
-            if (!newWorker) {
-                return res.status(404).json({ message: 'Thợ mới không tồn tại' });
-            }
-
-            if (newWorker.status === 'busy') {
-                return res.status(400).json({
-                    message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
-                });
-            }
-
-            // Lưu lại thợ cũ để cập nhật trạng thái
-            const oldWorkerIds = [...carWorkerIds];
-
-            // Cập nhật thợ mới cho xe
-            car.workers = [{
-                worker: newWorkerId,
-                role: 'main'
-            }];
-
-            // Thợ mới bận
-            await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-            // Thợ cũ rảnh (vì đã được thay thế)
-            for (const oldWorkerId of oldWorkerIds) {
-                const allCarsOfOldWorker = await Car.find({ 
-                    'workers.worker': oldWorkerId,
-                    _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
-                });
-                const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-                const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-                if (hasWorking) {
-                    await Worker.findByIdAndUpdate(oldWorkerId, { status: 'busy' });
-                } else if (hasPending) {
-                    await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-                } else {
-                    await Worker.findByIdAndUpdate(oldWorkerId, { status: 'available' });
-                }
-            }
-
-            car.status = status;
-            await car.save();
-
-            return res.status(200).json({ 
-                message: 'Chuyển sang sửa bổ sung với thợ mới thành công', 
-                car: await Car.findById(id).populate('workers.worker')
-            });
-        }
-
-        // **LOGIC MỚI: XỬ LÝ CHUYỂN SANG DELIVERED**
-        if (status === 'delivered') {
-            // Tất cả thợ liên quan đều rảnh
-            for (const workerId of carWorkerIds) {
-                const allCarsOfWorker = await Car.find({ 
-                    'workers.worker': workerId,
-                    _id: { $ne: car._id } // bỏ qua xe hiện tại
-                });
-                const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-                const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-                if (hasWorking) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-                } else if (hasPending) {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-                } else {
-                    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-                }
-            }
-
-            car.status = status;
-            await car.save();
-
-            return res.status(200).json({ 
-                message: 'Xe đã được giao thành công', 
-                car: await Car.findById(id).populate('workers.worker')
-            });
-        }
-
-        // **LOGIC CŨ: Nếu muốn đổi sang "working", kiểm tra thợ có đang bận không**
-        if (status === 'working') {
-            for (const workerId of carWorkerIds) {
-                const otherWorkingCars = await Car.findOne({
-                    _id: { $ne: car._id }, // bỏ qua xe hiện tại
-                    'workers.worker': workerId,
-                    status: 'working',
-                });
-
-                if (otherWorkingCars) {
-                    // Lấy tên thợ để hiển thị thông báo
-                    const worker = await Worker.findById(workerId);
-                    return res.status(400).json({
-                        message: `Không thể chuyển sang 'working'. Thợ ${worker?.name || 'không rõ'} đang sửa xe khác.`,
-                    });
-                }
-            }
-        }
-
-        // **LOGIC CŨ: Nếu vượt qua được kiểm tra thì cập nhật trạng thái**
         car.status = status;
         await car.save();
 
-        // **LOGIC CŨ: Cập nhật trạng thái thợ**
-        for (const workerId of carWorkerIds) {
-            const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
+        await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
 
-            const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-            const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-            const hasWaitingWash = allCarsOfWorker.some(c => c.status === 'waiting_wash');
-            const hasAdditionalRepair = allCarsOfWorker.some(c => c.status === 'additional_repair');
+        for (const oldWorkerId of oldWorkerIds) {
+          if (oldWorkerId !== newWorkerId.toString()) {
+            const allCarsOfOldWorker = await Car.find({
+              'workers.worker': oldWorkerId,
+              _id: { $ne: car._id }
+            });
 
-            if (hasWorking || hasWaitingWash || hasAdditionalRepair) {
-                await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-            } else if (hasPending) {
-                await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-            } else {
-                await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-            }
+            const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
+            const hasWaitingWash = allCarsOfOldWorker.some(c => c.status === 'waiting_wash');
+            const hasAdditionalRepair = allCarsOfOldWorker.some(c => c.status === 'additional_repair');
+            const hasWaitingHandover = allCarsOfOldWorker.some(c => c.status === 'waiting_handover');
+
+            await Worker.findByIdAndUpdate(oldWorkerId, {
+              status: (hasWorking || hasWaitingWash || hasAdditionalRepair || hasWaitingHandover)
+                ? 'busy'
+                : 'available'
+            });
+          }
         }
 
-        const updatedCar = await Car.findById(id).populate('workers.worker');
-        return res.status(200).json({ 
-            message: `Cập nhật trạng thái xe thành công: ${status}`, 
-            car: updatedCar 
+        return res.status(200).json({
+          message: 'Rửa xe xong, chuyển sang chờ giao xe và gán người giao xe thành công',
+          car: await Car.findById(id).populate('workers.worker')
         });
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
+      }
+
+      // Không chọn ai => khách tự lấy xe
+      for (const oldWorkerId of oldWorkerIds) {
+        car.workerLogs.push({
+          worker: oldWorkerId,
+          action: 'removed',
+          note: 'Rửa xe xong, khách tự lấy xe',
+          timestamp: new Date()
+        });
+      }
+
+      car.workers = [];
+      car.status = status;
+      await car.save();
+
+      for (const oldWorkerId of oldWorkerIds) {
+        const allCarsOfOldWorker = await Car.find({
+          'workers.worker': oldWorkerId,
+          _id: { $ne: car._id }
+        });
+
+        const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
+        const hasWaitingWash = allCarsOfOldWorker.some(c => c.status === 'waiting_wash');
+        const hasAdditionalRepair = allCarsOfOldWorker.some(c => c.status === 'additional_repair');
+        const hasWaitingHandover = allCarsOfOldWorker.some(c => c.status === 'waiting_handover');
+
+        await Worker.findByIdAndUpdate(oldWorkerId, {
+          status: (hasWorking || hasWaitingWash || hasAdditionalRepair || hasWaitingHandover)
+            ? 'busy'
+            : 'available'
+        });
+      }
+
+      return res.status(200).json({
+        message: 'Rửa xe xong, chuyển sang chờ giao xe - khách tự lấy xe',
+        car: await Car.findById(id).populate('workers.worker')
+      });
     }
+    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_WASH**
+    if (currentStatus === 'done' && status === 'waiting_wash') {
+      const prevPhaseLabel = 'sửa xe';
+      const phaseLabel = 'rửa xe';
+
+      if (newWorkerId) {
+        const newWorker = await Worker.findById(newWorkerId);
+        if (!newWorker) {
+          return res.status(404).json({ message: 'Thợ mới không tồn tại' });
+        }
+
+        if (newWorker.status === 'busy') {
+          return res.status(400).json({
+            message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
+          });
+        }
+
+        // Lưu log: Thợ cũ bị thay
+        for (const oldWorker of car.workers) {
+          const roleLabel = oldWorker.role === 'sub' ? 'phụ' : 'chính';
+          car.workerLogs.push({
+            worker: oldWorker.worker,
+            action: 'removed',
+            note: `Thợ ${roleLabel} lúc ${prevPhaseLabel} bị thay thế`,
+            timestamp: new Date()
+          });
+        }
+
+        // Lưu log: Thợ mới được gán
+        car.workerLogs.push({
+          worker: newWorkerId,
+          action: 'added',
+          note: `Thợ chính lúc ${phaseLabel} được gán`,
+          timestamp: new Date()
+        });
+
+        // Cập nhật thợ mới
+        car.workers = [{
+          worker: newWorkerId,
+          role: 'main'
+        }];
+
+        await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
+
+        // Cập nhật trạng thái cho thợ cũ
+        for (const oldWorkerId of carWorkerIds) {
+          const otherCars = await Car.find({
+            'workers.worker': oldWorkerId,
+            _id: { $ne: car._id }
+          });
+
+          const hasWorking = otherCars.some(c => c.status === 'working');
+          const hasPending = otherCars.some(c => c.status === 'pending');
+
+          await Worker.findByIdAndUpdate(oldWorkerId, {
+            status: hasWorking ? 'busy' : 'available'
+          });
+        }
+
+        car.status = status;
+        await car.save();
+
+        return res.status(200).json({
+          message: 'Chuyển sang chờ rửa xe với thợ mới thành công',
+          car: await Car.findById(id).populate('workers.worker')
+        });
+
+      } else {
+        // Không có thợ mới => giữ thợ cũ
+        car.status = status;
+        await car.save();
+
+        for (const workerId of carWorkerIds) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
+        }
+
+        return res.status(200).json({
+          message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công',
+          car: await Car.findById(id).populate('workers.worker')
+        });
+      }
+    }
+
+
+
+
+
+    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_HANDOVER**
+    if (currentStatus === 'done' && status === 'waiting_handover') {
+      // Thợ cũ rảnh vì không cần làm gì thêm
+      for (const workerId of carWorkerIds) {
+        const allCarsOfWorker = await Car.find({
+          'workers.worker': workerId,
+          _id: { $ne: car._id } // bỏ qua xe hiện tại
+        });
+        const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
+        const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
+
+        if (hasWorking) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
+        } else if (hasPending) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+        } else {
+          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+        }
+      }
+
+      car.status = status;
+      await car.save();
+
+      return res.status(200).json({
+        message: 'Chuyển sang chờ giao xe thành công',
+        car: await Car.findById(id).populate('workers.worker')
+      });
+    }
+
+    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH SANG WAITING_HANDOVER**
+    if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
+      // Rửa xe xong, thợ rảnh
+      for (const workerId of carWorkerIds) {
+        const allCarsOfWorker = await Car.find({
+          'workers.worker': workerId,
+          _id: { $ne: car._id } // bỏ qua xe hiện tại
+        });
+        const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
+        const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
+
+        if (hasWorking) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
+        } else if (hasPending) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+        } else {
+          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+        }
+      }
+
+      car.status = status;
+      await car.save();
+
+      return res.status(200).json({
+        message: 'Rửa xe xong, chuyển sang chờ giao xe thành công',
+        car: await Car.findById(id).populate('workers.worker')
+      });
+    }
+
+    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH SANG ADDITIONAL_REPAIR**
+    if (currentStatus === 'waiting_wash' && status === 'additional_repair') {
+      const phaseLabel = 'sửa bổ sung';
+
+      if (!newWorkerId) {
+        return res.status(400).json({
+          message: 'Cần chọn thợ mới cho sửa bổ sung'
+        });
+      }
+
+      // Kiểm tra thợ mới có rảnh không
+      const newWorker = await Worker.findById(newWorkerId);
+      if (!newWorker) {
+        return res.status(404).json({ message: 'Thợ mới không tồn tại' });
+      }
+
+      if (newWorker.status === 'busy') {
+        return res.status(400).json({
+          message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
+        });
+      }
+
+      // Lưu lại thợ cũ để cập nhật trạng thái và ghi log
+      const oldWorkerIds = [...carWorkerIds];
+
+      // 🔥 Ghi log: thợ cũ bị gỡ
+      for (const oldWorkerId of oldWorkerIds) {
+        const oldWorkerObj = car.workers.find(w => w.worker.toString() === oldWorkerId);
+        car.workerLogs.push({
+          worker: oldWorkerId,
+          action: 'removed',
+          note: `Thợ ${oldWorkerObj?.role || 'chính'} lúc ${phaseLabel} bị thay thế`,
+          timestamp: new Date()
+        });
+      }
+
+      // 🔥 Ghi log: thợ mới được gán
+      car.workerLogs.push({
+        worker: newWorkerId,
+        action: 'added',
+        note: `Thợ chính lúc ${phaseLabel} được gán`,
+        timestamp: new Date()
+      });
+
+      // Cập nhật thợ mới cho xe
+      car.workers = [{
+        worker: newWorkerId,
+        role: 'main'
+      }];
+
+      // Thợ mới → bận
+      await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
+
+      // Thợ cũ → kiểm tra trạng thái (có còn làm xe khác không?)
+      for (const oldWorkerId of oldWorkerIds) {
+        const allCarsOfOldWorker = await Car.find({
+          'workers.worker': oldWorkerId,
+          _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
+        });
+
+        const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
+        const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
+
+        await Worker.findByIdAndUpdate(oldWorkerId, {
+          status: hasWorking ? 'busy' : 'available'
+        });
+      }
+
+      // Cập nhật trạng thái xe
+      car.status = status;
+      await car.save();
+
+      return res.status(200).json({
+        message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
+        car: await Car.findById(id).populate('workers.worker')
+      });
+    }
+
+
+    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_HANDOVER SANG ADDITIONAL_REPAIR**
+    if (currentStatus === 'waiting_handover' && status === 'additional_repair') {
+      if (!newWorkerId) {
+        return res.status(400).json({
+          message: 'Cần chọn thợ mới cho sửa bổ sung'
+        });
+      }
+
+      const newWorker = await Worker.findById(newWorkerId);
+      if (!newWorker) {
+        return res.status(404).json({ message: 'Thợ mới không tồn tại' });
+      }
+
+      if (newWorker.status === 'busy') {
+        return res.status(400).json({
+          message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
+        });
+      }
+
+      const oldWorkerIds = [...carWorkerIds];
+
+      // Cập nhật thợ mới cho xe
+      car.workers = [{
+        worker: newWorkerId,
+        role: 'main'
+      }];
+
+      // Ghi lại lịch sử thay đổi thợ
+      for (const oldWorkerId of oldWorkerIds) {
+        car.workerLogs.push({
+          worker: oldWorkerId,
+          action: 'removed',
+          note: `Thợ bị thay khi chuyển trạng thái từ ${currentStatus} → ${status}`,
+          timestamp: new Date()
+        });
+      }
+
+      car.workerLogs.push({
+        worker: newWorkerId,
+        action: 'added',
+        note: `Thợ mới được chỉ định khi chuyển sang ${status}`,
+        timestamp: new Date()
+      });
+
+      await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
+
+      for (const oldWorkerId of oldWorkerIds) {
+        const allCarsOfOldWorker = await Car.find({
+          'workers.worker': oldWorkerId,
+          _id: { $ne: car._id }
+        });
+        const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
+        const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
+
+        await Worker.findByIdAndUpdate(oldWorkerId, {
+          status: hasWorking ? 'busy' : 'available'
+        });
+      }
+
+      car.status = status;
+      await car.save();
+
+      return res.status(200).json({
+        message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
+        car: await Car.findById(id).populate('workers.worker')
+      });
+    }
+
+
+    // **LOGIC MỚI: XỬ LÝ CHUYỂN SANG DELIVERED**
+    if (status === 'delivered') {
+      // Tất cả thợ liên quan đều rảnh
+      for (const workerId of carWorkerIds) {
+        const allCarsOfWorker = await Car.find({
+          'workers.worker': workerId,
+          _id: { $ne: car._id } // bỏ qua xe hiện tại
+        });
+        const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
+        const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
+
+        if (hasWorking) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
+        } else if (hasPending) {
+          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+        } else {
+          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+        }
+      }
+
+      car.status = status;
+      await car.save();
+
+      // ✅ Đóng toàn bộ công việc của các thợ với xe này vì xe đã giao xong
+      await Wokers.updateMany(
+        { car: car._id, status: 'co_viec' },
+        { status: 'chua_co_viec' }
+      );
+
+      return res.status(200).json({
+        message: 'Xe đã được giao thành công',
+        car: await Car.findById(id).populate('workers.worker')
+      });
+    }
+
+    // **LOGIC CŨ: Nếu muốn đổi sang "working", kiểm tra thợ có đang bận không**
+    if (status === 'working') {
+      for (const workerId of carWorkerIds) {
+        const otherWorkingCars = await Car.findOne({
+          _id: { $ne: car._id }, // bỏ qua xe hiện tại
+          'workers.worker': workerId,
+          status: 'working',
+        });
+
+        if (otherWorkingCars) {
+          // Lấy tên thợ để hiển thị thông báo
+          const worker = await Worker.findById(workerId);
+          return res.status(400).json({
+            message: `Không thể chuyển sang 'working'. Thợ ${worker?.name || 'không rõ'} đang sửa xe khác.`,
+          });
+        }
+      }
+    }
+
+    // **LOGIC CŨ: Nếu vượt qua được kiểm tra thì cập nhật trạng thái**
+    car.status = status;
+    await car.save();
+
+    // **LOGIC CŨ: Cập nhật trạng thái thợ**
+    for (const workerId of carWorkerIds) {
+      const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
+
+      const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
+      const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
+      const hasWaitingWash = allCarsOfWorker.some(c => c.status === 'waiting_wash');
+      const hasAdditionalRepair = allCarsOfWorker.some(c => c.status === 'additional_repair');
+
+      if (hasWorking || hasWaitingWash || hasAdditionalRepair) {
+        await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
+      } else if (hasPending) {
+        await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+      } else {
+        await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+      }
+    }
+
+    const updatedCar = await Car.findById(id).populate('workers.worker');
+    return res.status(200).json({
+      message: `Cập nhật trạng thái xe thành công: ${status}`,
+      car: updatedCar
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
 };
 const getCarsByLocation = async (req, res) => {
-    const { locationId } = req.params;
+  const { locationId } = req.params;
 
-    try {
-        const cars = await Car.find({ location: locationId })
-            .populate('workers.worker', 'name')
-            .populate('supervisor', 'name')
-            .populate('carType', 'name')
-            .populate('location', 'name'); // Giả sử bạn có tên địa điểm
+  try {
+    const cars = await Car.find({ location: locationId })
+      .populate('workers.worker', 'name')
+      .populate('supervisor', 'name')
+      .populate('location', 'name'); // Giả sử bạn có tên địa điểm
 
-        return res.status(200).json(cars);
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
+    return res.status(200).json(cars);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
 };
 // Xóa xe
 const deleteCar = async (req, res) => {
-    const { id } = req.params;
-    try {
-        const car = await Car.findByIdAndDelete(id);
-        if (!car) {
-            return res.status(404).json({ message: 'Xe không tìm thấy' });
-        }
-
-        for (const w of car.workers) {
-            const stillHasJob = await Car.exists({ 'workers.worker': w.worker });
-            if (!stillHasJob) {
-                await Worker.findByIdAndUpdate(w.worker, { status: 'available' });
-            }
-        }
-
-        if (car.supervisor) {
-            const stillHasJob = await Car.exists({ supervisor: car.supervisor });
-            if (!stillHasJob) {
-                await Supervisor.findByIdAndUpdate(car.supervisor, { status: 'available' });
-            }
-        }
-
-        return res.status(200).json({ message: `Xe ${car.plateNumber} đã được xóa.` });
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
+  const { id } = req.params;
+  try {
+    const car = await Car.findByIdAndDelete(id);
+    if (!car) {
+      return res.status(404).json({ message: 'Xe không tìm thấy' });
     }
+
+    req.auditDeleted = { label: car.plateNumber };
+
+    for (const w of car.workers) {
+      const stillHasJob = await Car.exists({ 'workers.worker': w.worker });
+      if (!stillHasJob) {
+        await Worker.findByIdAndUpdate(w.worker, { status: 'available' });
+      }
+    }
+
+    if (car.supervisor) {
+      const stillHasJob = await Car.exists({ supervisor: car.supervisor });
+      if (!stillHasJob) {
+        await Supervisor.findByIdAndUpdate(car.supervisor, { status: 'available' });
+      }
+    }
+
+    // ✅ Đóng các công việc của thợ gắn với xe này vì xe đã bị xóa
+    await Wokers.updateMany(
+      { car: car._id, status: 'co_viec' },
+      { status: 'chua_co_viec' }
+    );
+
+    return res.status(200).json({ message: `Xe ${car.plateNumber} đã được xóa.` });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
 };
 const getCarByPlateNumber = async (req, res) => {
   try {
     const { plateNumber } = req.params;
 
     const car = await Car.findOne({ plateNumber })
-      .populate('carType', 'name')
       .populate('location', 'name');
 
     if (!car) {
@@ -1079,8 +972,7 @@ const getWorkingAndPendingCars = async (req, res) => {
         const cars = await Car.find({ status })
           .populate('workers.worker', 'name')
           .populate('supervisor', 'name')
-          .populate('carType', 'name')
-          .populate('location', 'name');
+              .populate('location', 'name');
         result[status] = cars;
       })
     );
@@ -1100,7 +992,6 @@ const getOverdueCars = async (req, res) => {
     })
       .populate('workers.worker', 'name')
       .populate('supervisor', 'name')           // optional nếu bạn cần hiển thị giám sát
-      .populate('carType', 'name')              // thêm dòng này
       .populate('location', 'name');            // thêm dòng này
 
     const overdueCars = allCars.filter(car => {
@@ -1118,16 +1009,925 @@ const getOverdueCars = async (req, res) => {
   }
 };
 
+
+const getCarWorkers = async (req, res) => {
+  try {
+    const { id } = req.params; // ID của xe
+
+    // Tìm xe theo ID và populate thông tin thợ
+    const car = await Car.findById(id)
+      .populate({
+        path: 'workers.worker',
+        select: 'name phone email specialty status' // Chọn các trường cần thiết
+      })
+      .populate('location', 'name address') // Lấy thông tin địa điểm
+      .select('plateNumber status workers externalCarTypeName location condition deliveryTime currentDate currentTime');
+
+    if (!car) {
+      return res.status(404).json({
+        message: 'Xe không tìm thấy'
+      });
+    }
+
+    // Chuẩn bị dữ liệu response
+    const carInfo = {
+      id: car._id,
+      plateNumber: car.plateNumber,
+      status: car.status,
+      carType: car.externalCarTypeName || 'Không xác định',
+      location: car.location ? `${car.location.name} - ${car.location.address}` : 'Không xác định',
+      condition: car.condition || 'Bình thường',
+      deliveryTime: car.deliveryTime || 'Chưa xác định',
+      currentDate: car.currentDate,
+      currentTime: car.currentTime,
+      totalWorkers: car.workers.length
+    };
+
+    // Xử lý danh sách thợ với vai trò và trạng thái
+    const workersList = car.workers.map((workerInfo, index) => {
+      const worker = workerInfo.worker;
+
+      // Xác định nhiệm vụ dựa trên role và status của xe
+      let task = '';
+      switch (car.status) {
+        case 'pending':
+          task = 'Chờ bắt đầu sửa chữa';
+          break;
+        case 'working':
+          task = workerInfo.role === 'main' ? 'Thợ chính - Đang sửa chữa' : 'Thợ phụ - Hỗ trợ sửa chữa';
+          break;
+        case 'done':
+          task = 'Đã hoàn thành sửa chữa';
+          break;
+        case 'waiting_wash':
+          task = 'Chuẩn bị rửa xe hoặc đang rửa xe';
+          break;
+        case 'waiting_handover':
+          task = 'Chờ giao xe cho khách hàng';
+          break;
+        case 'additional_repair':
+          task = workerInfo.role === 'main' ? 'Thợ chính - Đang sửa bổ sung' : 'Thợ phụ - Hỗ trợ sửa bổ sung';
+          break;
+        case 'delivered':
+          task = 'Đã giao xe xong';
+          break;
+        default:
+          task = 'Không xác định';
+      }
+
+      return {
+        index: index + 1,
+        workerId: worker._id,
+        workerName: worker.name,
+        workerPhone: worker.phone || 'Chưa có',
+        workerEmail: worker.email || 'Chưa có',
+        workerSpecialty: worker.specialty || 'Tổng quát',
+        workerStatus: worker.status,
+        role: workerInfo.role === 'main' ? 'Thợ chính' : 'Thợ phụ',
+        currentTask: task,
+        isActive: ['working', 'additional_repair', 'waiting_wash'].includes(car.status)
+      };
+    });
+
+    // Thống kê
+    const statistics = {
+      mainWorkers: workersList.filter(w => w.role === 'Thợ chính').length,
+      assistantWorkers: workersList.filter(w => w.role === 'Thợ phụ').length,
+      busyWorkers: workersList.filter(w => w.workerStatus === 'busy').length,
+      availableWorkers: workersList.filter(w => w.workerStatus === 'available').length
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: 'Lấy danh sách thợ thành công',
+      data: {
+        carInfo,
+        workers: workersList,
+        statistics
+      }
+    });
+
+  } catch (error) {
+    console.error('Lỗi khi lấy danh sách thợ:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy danh sách thợ',
+      error: error.message
+    });
+  }
+};
+const convertStatusToLabel = (status) => {
+  switch (status) {
+    case 'working': return 'sửa xe';
+    case 'waiting_wash': return 'rửa xe';
+    case 'waiting_handover': return 'chờ bàn giao';
+    case 'additional_repair': return 'sửa bổ sung';
+    case 'done': return 'hoàn thành';
+    default: return status;
+  }
+};
+
+// API để lấy lịch sử thợ của xe (nếu có lưu lịch sử thay đổi thợ)
+const getCarWorkersHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const car = await Car.findById(id)
+      .populate('workers.worker', 'name specialty team')
+      .populate({
+        path: 'workers.worker',
+        populate: {
+          path: 'team',
+          select: 'name'
+        }
+      })
+      .populate('workerLogs.worker', 'name specialty team')
+      .populate({
+        path: 'workerLogs.worker',
+        populate: {
+          path: 'team',
+          select: 'name'
+        }
+      })
+      .select('plateNumber status workers workerLogs');
+
+    if (!car) {
+      return res.status(404).json({
+        success: false,
+        message: 'Xe không tìm thấy'
+      });
+    }
+
+    const getPhaseFromNote = (note = '') => {
+      const text = note.toLowerCase();
+
+      if (
+        text.includes('rửa xe') ||
+        text.includes('rua xe')
+      ) {
+        return 'wash';
+      }
+
+      if (
+        text.includes('giao xe') ||
+        text.includes('chờ giao') ||
+        text.includes('cho giao') ||
+        text.includes('khách tự lấy') ||
+        text.includes('khach tu lay')
+      ) {
+        return 'handover';
+      }
+
+      if (
+        text.includes('sửa bổ sung') ||
+        text.includes('sua bo sung') ||
+        text.includes('additional_repair')
+      ) {
+        return 'additional_repair';
+      }
+
+      if (
+        text.includes('sửa xe') ||
+        text.includes('sua xe') ||
+        text.includes('working')
+      ) {
+        return 'repair';
+      }
+
+      return 'other';
+    };
+
+    const getPhaseLabel = (phase) => {
+      switch (phase) {
+        case 'repair':
+          return 'Sửa xe';
+        case 'wash':
+          return 'Rửa xe';
+        case 'handover':
+          return 'Giao xe';
+        case 'additional_repair':
+          return 'Sửa bổ sung';
+        default:
+          return 'Khác';
+      }
+    };
+
+    const getWorkerType = (worker) => {
+      const teamName = worker?.team?.name?.toLowerCase() || '';
+
+      if (
+        teamName.includes('lái xe') ||
+        teamName.includes('lai xe') ||
+        teamName.includes('tài xế') ||
+        teamName.includes('tai xe')
+      ) {
+        return 'Tài xế';
+      }
+
+      return 'KTV';
+    };
+
+    const formatWorker = (worker, role = '') => ({
+      id: worker?._id || null,
+      name: worker?.name || 'Không xác định',
+      specialty: worker?.specialty || 'Không rõ',
+      team: worker?.team?.name || 'Chưa có tổ',
+      type: getWorkerType(worker),
+      role
+    });
+
+    const currentWorkers = car.workers.map(w => {
+      const worker = w.worker;
+
+      return {
+        ...formatWorker(worker, w.role),
+        roleLabel:
+          w.role === 'main'
+            ? 'Chính'
+            : w.role === 'sub'
+              ? 'Phụ'
+              : w.role || 'Không rõ'
+      };
+    });
+
+    const historyLogs = car.workerLogs
+      .map(log => {
+        const phase = getPhaseFromNote(log.note || '');
+
+        return {
+          id: log._id,
+          worker: formatWorker(log.worker),
+          name: log.worker?.name || 'Không xác định',
+          specialty: log.worker?.specialty || 'Không rõ',
+          team: log.worker?.team?.name || 'Chưa có tổ',
+          type: getWorkerType(log.worker),
+          action: log.action,
+          actionLabel:
+            log.action === 'added'
+              ? 'Được gán'
+              : log.action === 'removed'
+                ? 'Được gỡ'
+                : log.action === 'reassigned'
+                  ? 'Được thay đổi'
+                  : log.action,
+          phase,
+          phaseLabel: getPhaseLabel(phase),
+          note: log.note || '',
+          timestamp: log.timestamp
+        };
+      })
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const repairLogs = historyLogs.filter(log => log.phase === 'repair');
+    const washLogs = historyLogs.filter(log => log.phase === 'wash');
+    const handoverLogs = historyLogs.filter(log => log.phase === 'handover');
+    const additionalRepairLogs = historyLogs.filter(log => log.phase === 'additional_repair');
+    const otherLogs = historyLogs.filter(log => log.phase === 'other');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Lấy lịch sử sửa, rửa và giao xe thành công',
+      data: {
+        plateNumber: car.plateNumber,
+        status: car.status,
+
+        currentWorkers,
+
+        historyLogs,
+
+        groupedHistory: {
+          repair: repairLogs,
+          wash: washLogs,
+          handover: handoverLogs,
+          additionalRepair: additionalRepairLogs,
+          other: otherLogs
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Lỗi khi lấy lịch sử thợ:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi lấy lịch sử thợ',
+      error: error.message
+    });
+  }
+};
+
+
+// API để xuất báo cáo danh sách thợ theo định dạng
+const exportCarWorkersReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { format = 'json' } = req.query; // json, csv, xlsx
+
+    const car = await Car.findById(id)
+      .populate('workers.worker', 'name phone email specialty status')
+      .populate('location', 'name address');
+
+    if (!car) {
+      return res.status(404).json({
+        message: 'Xe không tìm thấy'
+      });
+    }
+
+    const reportData = {
+      reportDate: new Date().toISOString(),
+      carInfo: {
+        plateNumber: car.plateNumber,
+        status: car.status,
+        carType: car.externalCarTypeName,
+        location: car.location?.name
+      },
+      workers: car.workers.map(w => ({
+        name: w.worker.name,
+        phone: w.worker.phone,
+        email: w.worker.email,
+        specialty: w.worker.specialty,
+        role: w.role,
+        status: w.worker.status
+      }))
+    };
+
+    switch (format.toLowerCase()) {
+      case 'csv':
+        // Chuyển đổi sang CSV format
+        const csvHeaders = 'Tên thợ,Số điện thoại,Email,Chuyên môn,Vai trò,Trạng thái\n';
+        const csvRows = reportData.workers.map(w =>
+          `${w.name},${w.phone || ''},${w.email || ''},${w.specialty || ''},${w.role},${w.status}`
+        ).join('\n');
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="workers_report_${car.plateNumber}.csv"`);
+        return res.send('\uFEFF' + csvHeaders + csvRows); // \uFEFF for UTF-8 BOM
+
+      case 'xlsx':
+        // Nếu sử dụng thư viện như xlsx
+        return res.status(200).json({
+          message: 'Xuất Excel chưa được implement',
+          data: reportData
+        });
+
+      default: // json
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="workers_report_${car.plateNumber}.json"`);
+        return res.status(200).json(reportData);
+    }
+
+  } catch (error) {
+    console.error('Lỗi khi xuất báo cáo:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi xuất báo cáo',
+      error: error.message
+    });
+  }
+};
+const getRepairHistory = async (req, res) => {
+  try {
+    const { date, from, to, workerId: queryWorkerId } = req.query;
+
+    const workerScope = resolveRepairHistoryWorkerFilter(req, queryWorkerId);
+    if (workerScope.blocked) {
+      return res.json({ totalRevenue: 0, revenueBeforeCommission: 0, items: [] });
+    }
+
+    const workerFilter = workerScope.workerId;
+    const itemQuery = workerFilter ? repairItemsForWorkerQuery(workerFilter) : {};
+
+    let items = await RepairOrderItem.find(itemQuery)
+      .populate({
+        path: 'car',
+        select: 'plateNumber externalCarTypeName currentDate status isLate workers workerLogs',
+        populate: { path: 'workers.worker', select: 'name soBaoDanh' },
+      })
+      .populate('workerAssignments.worker', 'name soBaoDanh')
+      .populate('worker', 'name soBaoDanh')
+      .sort({ createdAt: -1 });
+
+    const rangeFrom = from || date;
+    const rangeTo = to || date;
+
+    if (rangeFrom && rangeTo) {
+      items = items.filter((item) =>
+        isDateInRange(getItemRevenueDate(item, item.car), rangeFrom, rangeTo)
+      );
+    } else if (date) {
+      items = items.filter(
+        (item) => getItemRevenueDate(item, item.car) === date
+      );
+    }
+
+    const workerIdSet = new Set();
+    items.forEach((item) => {
+      getItemWorkerAssignments(item, item.car).forEach((assignment) => {
+        if (assignment.workerId) {
+          workerIdSet.add(String(assignment.workerId));
+        }
+      });
+    });
+
+    const countRevenueMap = await buildCountRevenueMap([...workerIdSet]);
+
+    const result = items.map((item) => {
+      const assignments = getItemWorkerAssignments(item, item.car);
+
+      const mappedAssignments = assignments.map((assignment) => {
+        const workerKey = String(assignment.workerId);
+        const rev = getRevenueForWorkerFromItem(item, workerKey, countRevenueMap, item.car);
+
+        return {
+          workerId: assignment.workerId,
+          workerName: assignment.workerName,
+          percentage: assignment.percentage,
+          grossRevenue: rev?.grossRevenue || 0,
+          revenue: rev?.netRevenue || 0,
+        };
+      });
+
+      const visibleAssignments = workerFilter
+        ? mappedAssignments.filter(
+            (assignment) => String(assignment.workerId) === workerFilter
+          )
+        : mappedAssignments;
+
+      return {
+        _id: item._id,
+        plateNumber: item.plateNumber || item.car?.plateNumber || '',
+        carType: item.car?.externalCarTypeName || '',
+        carDate: item.car?.currentDate || '',
+        carStatus: item.car?.status || '',
+        carIsLate: item.car?.isLate || false,
+        groupName: item.groupName || '',
+        content: item.content || '',
+        quantity: item.quantity || 0,
+        unitPrice: item.unitPrice || 0,
+        amount: Number(item.amount || 0),
+        assignments: visibleAssignments,
+        allAssignments: req.user.role === 'ktv' ? undefined : mappedAssignments,
+        createdAt: item.createdAt,
+      };
+    }).filter((item) => item.assignments.length > 0 || !workerFilter);
+
+    const sumRevenue = (targetItems, field = 'revenue') =>
+      targetItems.reduce(
+        (sum, item) =>
+          sum + item.assignments.reduce((s, a) => s + Number(a[field] || 0), 0),
+        0
+      );
+
+    const summary = {
+      totalRevenue: sumRevenue(result),
+      revenueBeforeCommission: sumRevenue(result, 'grossRevenue'),
+      revenueAfterCommission: sumRevenue(result),
+      totalItems: result.length,
+      totalCars: new Set(result.map((item) => `${item.plateNumber}__${item.carDate}`)).size,
+    };
+
+    if (req.user.role === 'ktv') {
+      return res.json({
+        ...summary,
+        items: result.map(
+          ({
+            amount,
+            unitPrice,
+            quantity,
+            assignments,
+            allAssignments,
+            ...rest
+          }) => rest
+        ),
+      });
+    }
+
+    return res.json({
+      ...summary,
+      items: result,
+    });
+  } catch (error) {
+    console.error('Lỗi lấy lịch sử sửa chữa:', error);
+    return res.status(500).json({
+      message: error.message || 'Lỗi lấy lịch sử sửa chữa',
+    });
+  }
+};
+
+const getCarRepairItems = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const car = await Car.findById(id);
+
+    if (!car) {
+      return res.status(404).json({ message: 'Không tìm thấy xe' });
+    }
+
+    let items = await RepairOrderItem.find({ car: id })
+      .populate('workerAssignments.worker', 'name')
+      .populate('worker', 'name')
+      .sort({ isManual: 1, groupName: 1, createdAt: 1 });
+
+    const hasApiItems = items.some((item) => !item.isManual);
+
+    if (!hasApiItems) {
+      const roKeyword = car.roCode || car.roNumber || '';
+      const { chiTiet } = await fetchRepairDetailsForCar(car.plateNumber, roKeyword);
+
+      if (chiTiet.length > 0) {
+        await RepairOrderItem.insertMany(
+          chiTiet.map((item) => mapExternalItemToRepairOrder(item, car))
+        );
+
+        items = await RepairOrderItem.find({ car: id })
+          .populate('workerAssignments.worker', 'name')
+          .populate('worker', 'name')
+          .sort({ isManual: 1, groupName: 1, createdAt: 1 });
+      }
+    }
+
+    return res.json(items);
+  } catch (error) {
+    console.error('Lỗi lấy chi tiết sửa chữa:', error);
+    return res.status(500).json({
+      message: error.response?.data?.message || error.message || 'Lỗi lấy chi tiết sửa chữa',
+    });
+  }
+};
+
+const normalizeAssignmentWorkers = (assignment) => {
+  if (Array.isArray(assignment.workers) && assignment.workers.length > 0) {
+    return assignment.workers
+      .filter((entry) => entry?.workerId)
+      .map((entry) => ({
+        workerId: entry.workerId,
+        percentage: Number(entry.percentage) || 0,
+      }));
+  }
+
+  if (assignment.workerId) {
+    return [{ workerId: assignment.workerId, percentage: 100 }];
+  }
+
+  return [];
+};
+
+const extractWorkersFromRepairItem = (item) => {
+  if (!item) return [];
+
+  if (Array.isArray(item.workerAssignments) && item.workerAssignments.length > 0) {
+    return item.workerAssignments
+      .map((entry) => ({
+        workerId: String(entry.worker?._id || entry.worker || ''),
+        percentage: Number(entry.percentage) || 0,
+      }))
+      .filter((entry) => entry.workerId);
+  }
+
+  if (item.worker) {
+    return [{ workerId: String(item.worker._id || item.worker), percentage: 100 }];
+  }
+
+  return [];
+};
+
+const sortWorkerEntries = (entries) =>
+  [...entries].sort((a, b) => String(a.workerId).localeCompare(String(b.workerId)));
+
+const areWorkerAssignmentsEqual = (left, right) => {
+  const normalizedLeft = sortWorkerEntries(left);
+  const normalizedRight = sortWorkerEntries(right);
+
+  if (normalizedLeft.length !== normalizedRight.length) return false;
+
+  return normalizedLeft.every((entry, index) =>
+    String(entry.workerId) === String(normalizedRight[index].workerId)
+    && Number(entry.percentage) === Number(normalizedRight[index].percentage)
+  );
+};
+
+const isManualRepairItemChanged = (existingItem, payload, workerEntries) => {
+  if (!existingItem) return true;
+
+  const oldWorkers = extractWorkersFromRepairItem(existingItem);
+
+  return existingItem.content !== payload.content
+    || existingItem.groupName !== payload.groupName
+    || Number(existingItem.quantity) !== Number(payload.quantity)
+    || Number(existingItem.unitPrice) !== Number(payload.unitPrice)
+    || Number(existingItem.amount) !== Number(payload.amount)
+    || String(existingItem.unit || '') !== String(payload.unit || '')
+    || !areWorkerAssignmentsEqual(oldWorkers, workerEntries);
+};
+
+const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, itemAmount) => {
+  const workerAssignments = [];
+
+  for (const entry of workerEntries) {
+    const worker = await Worker.findById(entry.workerId);
+    if (!worker) {
+      throw new Error(`Thợ không tồn tại: ${entry.workerId}`);
+    }
+
+    workerAssignments.push({
+      worker: worker._id,
+      workerName: worker.name,
+      percentage: entry.percentage,
+    });
+  }
+
+  const workerName = workerAssignments
+    .map((item) => `${item.workerName} (${item.percentage}%)`)
+    .join(', ');
+
+  const workerRevenues = workerAssignments.length > 0
+    ? buildWorkerRevenuesForItem(
+      { amount: itemAmount, workerAssignments },
+      countRevenueMap
+    )
+    : [];
+
+  return {
+    workerAssignments,
+    worker: workerAssignments[0]?.worker || null,
+    workerName,
+    workerRevenues,
+  };
+};
+
+const fetchRepairItemsForCar = async (carId) =>
+  RepairOrderItem.find({ car: carId })
+    .populate('workerAssignments.worker', 'name')
+    .populate('worker', 'name')
+    .sort({ isManual: 1, groupName: 1, createdAt: 1 });
+
+const assignRepairItemWorkers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const assignments = Array.isArray(req.body.assignments) ? req.body.assignments : [];
+
+    const car = await Car.findById(id);
+    if (!car) {
+      return res.status(404).json({ message: 'Không tìm thấy xe' });
+    }
+
+    const allWorkerIds = new Set();
+    for (const assignment of assignments) {
+      normalizeAssignmentWorkers(assignment).forEach((entry) => {
+        allWorkerIds.add(String(entry.workerId));
+      });
+    }
+
+    const revenueWorkers = await Worker.find({
+      _id: { $in: [...allWorkerIds] },
+    }).select('countRevenue name');
+
+    const countRevenueMap = new Map(
+      revenueWorkers.map((worker) => [
+        worker._id.toString(),
+        worker.countRevenue !== false,
+      ])
+    );
+
+    const changedAssignments = [];
+
+    for (const assignment of assignments) {
+      if (!assignment.itemId) continue;
+
+      const existingItem = await RepairOrderItem.findOne({
+        _id: assignment.itemId,
+        car: id,
+        isManual: { $ne: true },
+      });
+
+      if (!existingItem) {
+        return res.status(404).json({
+          message: `Không tìm thấy hạng mục: ${assignment.itemId}`,
+        });
+      }
+
+      const workerEntries = normalizeAssignmentWorkers(assignment);
+      const oldWorkers = extractWorkersFromRepairItem(existingItem);
+
+      if (!areWorkerAssignmentsEqual(oldWorkers, workerEntries)) {
+        changedAssignments.push({
+          itemId: assignment.itemId,
+          workers: assignment.workers || [],
+          groupName: existingItem.groupName,
+          content: existingItem.content,
+        });
+      }
+
+      if (workerEntries.length > 0) {
+        const totalPercentage = workerEntries.reduce(
+          (sum, entry) => sum + entry.percentage,
+          0
+        );
+
+        if (totalPercentage > 100.01) {
+          return res.status(400).json({
+            message: `Hạng mục ${assignment.itemId}: tổng % thợ không được vượt quá 100 (hiện tại: ${totalPercentage}%)`,
+          });
+        }
+      }
+
+      const workerUpdate = await buildWorkerAssignmentUpdate(
+        workerEntries,
+        countRevenueMap,
+        existingItem.amount
+      );
+
+      await RepairOrderItem.findOneAndUpdate(
+        { _id: assignment.itemId, car: id },
+        workerUpdate,
+        { new: true }
+      );
+    }
+
+    req.auditChanges = {
+      ...(req.auditChanges || {}),
+      assignments: changedAssignments,
+    };
+
+    const items = await fetchRepairItemsForCar(id);
+
+    return res.json(items);
+  } catch (error) {
+    console.error('Lỗi phân công thợ cho hạng mục:', error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const saveManualRepairItems = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const manualItems = Array.isArray(req.body.items) ? req.body.items : [];
+
+    const car = await Car.findById(id);
+    if (!car) {
+      return res.status(404).json({ message: 'Không tìm thấy xe' });
+    }
+
+    const allWorkerIds = new Set();
+    manualItems.forEach((item) => {
+      normalizeAssignmentWorkers({ workers: item.workers }).forEach((entry) => {
+        allWorkerIds.add(String(entry.workerId));
+      });
+    });
+
+    const revenueWorkers = await Worker.find({
+      _id: { $in: [...allWorkerIds] },
+    }).select('countRevenue name');
+
+    const countRevenueMap = new Map(
+      revenueWorkers.map((worker) => [
+        worker._id.toString(),
+        worker.countRevenue !== false,
+      ])
+    );
+
+    const keptIds = [];
+    const changedManualItems = [];
+
+    for (const item of manualItems) {
+      const content = String(item.content || '').trim();
+      if (!content) {
+        return res.status(400).json({
+          message: 'Nội dung công việc ngoài báo giá không được để trống',
+        });
+      }
+
+      const quantity = Math.max(Number(item.quantity) || 1, 0);
+      const unitPrice = Math.max(Number(item.unitPrice) || 0, 0);
+      const amount = item.amount != null
+        ? Math.max(Number(item.amount) || 0, 0)
+        : Math.round(quantity * unitPrice);
+
+      const workerEntries = normalizeAssignmentWorkers({ workers: item.workers });
+
+      if (workerEntries.length > 0) {
+        const totalPercentage = workerEntries.reduce(
+          (sum, entry) => sum + entry.percentage,
+          0
+        );
+
+        if (totalPercentage > 100.01) {
+          return res.status(400).json({
+            message: `Công việc "${content}": tổng % thợ không được vượt quá 100 (hiện tại: ${totalPercentage}%)`,
+          });
+        }
+      }
+
+      const workerUpdate = await buildWorkerAssignmentUpdate(
+        workerEntries,
+        countRevenueMap,
+        amount
+      );
+
+      const payload = {
+        groupName: String(item.groupName || 'Phát sinh').trim(),
+        content,
+        quantity,
+        unitPrice,
+        amount,
+        unit: String(item.unit || '').trim(),
+        isManual: true,
+        ...workerUpdate,
+      };
+
+      const itemId = item._id ? String(item._id) : '';
+      const isNewItem = !itemId || itemId.startsWith('temp-');
+
+      if (!isNewItem) {
+        const existingItem = await RepairOrderItem.findOne({
+          _id: itemId,
+          car: id,
+          isManual: true,
+        });
+
+        if (!existingItem) {
+          return res.status(404).json({
+            message: `Không tìm thấy công việc ngoài báo giá: ${itemId}`,
+          });
+        }
+
+        if (isManualRepairItemChanged(existingItem, payload, workerEntries)) {
+          changedManualItems.push({
+            ...item,
+            groupName: payload.groupName,
+            content,
+            amount,
+            workers: item.workers || [],
+            isNew: false,
+          });
+        }
+
+        await RepairOrderItem.findByIdAndUpdate(itemId, payload);
+        keptIds.push(itemId);
+      } else {
+        changedManualItems.push({
+          ...item,
+          groupName: payload.groupName,
+          content,
+          amount,
+          workers: item.workers || [],
+          isNew: true,
+        });
+
+        const created = await RepairOrderItem.create({
+          car: id,
+          plateNumber: car.plateNumber,
+          roCode: car.roCode || '',
+          roNumber: car.roNumber || '',
+          externalItemId: '',
+          ...payload,
+        });
+        keptIds.push(String(created._id));
+      }
+    }
+
+    const deletedManualItems = await RepairOrderItem.find({
+      car: id,
+      isManual: true,
+      _id: { $nin: keptIds },
+    }).select('content groupName').lean();
+
+    await RepairOrderItem.deleteMany({
+      car: id,
+      isManual: true,
+      _id: { $nin: keptIds },
+    });
+
+    req.auditChanges = {
+      ...(req.auditChanges || {}),
+      manualItems: changedManualItems,
+      deletedManualItems,
+    };
+
+    const items = await fetchRepairItemsForCar(id);
+    return res.json(items);
+  } catch (error) {
+    console.error('Lỗi lưu công việc ngoài báo giá:', error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
-    getAllCars,
-    getCarById,
-    createCar,
-    updateCar,
-    deleteCar,
-    updateCarStatus,
-    getCarByPlateNumber,
-    getCarStats,
-    getWorkingAndPendingCars,
-    getCarsByLocation,
-    getOverdueCars
+  getAllCars,
+  getCarById,
+  createCar,
+  updateCar,
+  deleteCar,
+  updateCarStatus,
+  getCarByPlateNumber,
+  getCarStats,
+  getWorkingAndPendingCars,
+  getCarsByLocation,
+  getOverdueCars,
+  exportCarWorkersReport,
+  getCarWorkersHistory,
+  getCarWorkers,
+  getCarRepairItems,
+  assignRepairItemWorkers,
+  saveManualRepairItems,
+  getRepairHistory,
 };

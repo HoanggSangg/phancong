@@ -1,38 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const carController = require('../controllers/carController');
+const { authenticate, authorize } = require('../middleware/auth');
 
-// ✅ Thống kê số lượng xe theo trạng thái
-router.get('/stats', carController.getCarStats);
+router.use(authenticate);
 
-// ✅ Lấy danh sách xe đang sửa và chờ sửa
-router.get('/working-pending', carController.getWorkingAndPendingCars);
-
-// ✅ Lấy danh sách xe theo địa điểm (location)
-router.get('/by-location/:locationId', carController.getCarsByLocation);
-
-// ✅ Lấy xe theo biển số (phải đặt TRƯỚC '/:id' để không bị ăn nhầm)
-router.get('/by-plate/:plateNumber', carController.getCarByPlateNumber);
-
-// ✅ Lấy danh sách xe trễ hẹn (phải đặt TRƯỚC '/:id')
-router.get('/overdue', carController.getOverdueCars);
-
-// ✅ Lấy tất cả xe
-router.get('/', carController.getAllCars);
-
-// ✅ Lấy xe theo ID
-router.get('/:id', carController.getCarById);
-
-// ✅ Tạo xe mới
-router.post('/', carController.createCar);
-
-// ✅ Cập nhật xe
-router.put('/:id', carController.updateCar);
-
-// ✅ Cập nhật trạng thái xe
-router.put('/:id/status', carController.updateCarStatus);
-
-// ✅ Xóa xe
-router.delete('/:id', carController.deleteCar);
+router.get('/stats', authorize('admin', 'giam_sat', 'ktv'), carController.getCarStats);
+router.get('/working-pending', authorize('admin', 'giam_sat', 'ktv'), carController.getWorkingAndPendingCars);
+router.get('/by-location/:locationId', authorize('admin', 'giam_sat', 'ktv'), carController.getCarsByLocation);
+router.get('/by-plate/:plateNumber', authorize('admin', 'giam_sat', 'ktv'), carController.getCarByPlateNumber);
+router.get('/overdue', authorize('admin', 'giam_sat', 'ktv'), carController.getOverdueCars);
+router.get('/repair-history', authorize('admin', 'giam_sat', 'ktv'), carController.getRepairHistory);
+router.get('/:id/repair-items', authorize('admin', 'giam_sat', 'ktv'), carController.getCarRepairItems);
+router.put('/:id/repair-items/assignments', authorize('admin', 'giam_sat'), carController.assignRepairItemWorkers);
+router.put('/:id/repair-items/manual', authorize('admin', 'giam_sat'), carController.saveManualRepairItems);
+router.get('/:id/workers', authorize('admin', 'giam_sat'), carController.getCarWorkers);
+router.get('/:id/workers/history', authorize('admin', 'giam_sat'), carController.getCarWorkersHistory);
+router.get('/:id/workers/export', authorize('admin', 'giam_sat'), carController.exportCarWorkersReport);
+router.get('/', authorize('admin', 'giam_sat', 'ktv'), carController.getAllCars);
+router.get('/:id', authorize('admin', 'giam_sat', 'ktv'), carController.getCarById);
+router.post('/', authorize('admin', 'giam_sat'), carController.createCar);
+router.put('/:id', authorize('admin', 'giam_sat'), carController.updateCar);
+router.put('/:id/status', authorize('admin', 'giam_sat'), carController.updateCarStatus);
+router.delete('/:id', authorize('admin'), carController.deleteCar);
 
 module.exports = router;
