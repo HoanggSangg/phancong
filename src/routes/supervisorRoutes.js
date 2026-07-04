@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, access } = require('../middleware/auth');
 const {
   getAllSupervisors,
   getSupervisorById,
@@ -11,10 +11,10 @@ const {
 
 router.use(authenticate);
 
-router.get('/', authorize('admin', 'giam_sat'), getAllSupervisors);
-router.get('/:id', authorize('admin', 'giam_sat'), getSupervisorById);
-router.post('/', authorize('admin'), createSupervisor);
-router.put('/:id', authorize('admin'), updateSupervisor);
-router.delete('/:id', authorize('admin'), deleteSupervisor);
+router.get('/', access(['admin', 'giam_sat'], 'cars.add'), getAllSupervisors);
+router.get('/:id', access(['admin', 'giam_sat'], 'cars.add'), getSupervisorById);
+router.post('/', access(['admin'], 'system.supervisors'), createSupervisor);
+router.put('/:id', access(['admin'], 'system.supervisors'), updateSupervisor);
+router.delete('/:id', access(['admin'], 'system.supervisors'), deleteSupervisor);
 
 module.exports = router;

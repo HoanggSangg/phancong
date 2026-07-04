@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const locationController = require('../controllers/locationController');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, access } = require('../middleware/auth');
 
 router.use(authenticate);
 
-router.get('/', authorize('admin', 'giam_sat', 'ktv'), locationController.getAllLocations);
-router.post('/', authorize('admin'), locationController.createLocation);
-router.put('/:id', authorize('admin'), locationController.updateLocation);
-router.delete('/:id', authorize('admin'), locationController.deleteLocation);
+router.get('/', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), locationController.getAllLocations);
+router.post('/', access(['admin'], 'system.locations'), locationController.createLocation);
+router.put('/:id', access(['admin'], 'system.locations'), locationController.updateLocation);
+router.delete('/:id', access(['admin'], 'system.locations'), locationController.deleteLocation);
 
 module.exports = router;

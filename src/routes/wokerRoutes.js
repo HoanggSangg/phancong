@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, access } = require('../middleware/auth');
 
 const {
   getAllWorkers,
@@ -24,22 +24,22 @@ const {
 
 router.use(authenticate);
 
-router.get('/', authorize('admin', 'giam_sat', 'ktv'), getAllWorkers);
-router.post('/import', authorize('admin', 'giam_sat'), bulkImportWorkers);
-router.get('/available', authorize('admin', 'giam_sat', 'ktv'), getAvailableWorkers);
-router.get('/busy', authorize('admin', 'giam_sat'), getBusyWorkersWithCars);
-router.get('/kpi', authorize('admin', 'giam_sat', 'ktv'), getWorkerKpi);
-router.get('/kpi/all', authorize('admin', 'giam_sat'), getAllWorkersKpi);
-router.get('/revenue/chart', authorize('admin', 'giam_sat'), getWorkerRevenueChart);
-router.get('/revenue/weekly-summary', authorize('admin', 'giam_sat'), getWorkerWeeklyRevenueSummary);
-router.patch('/:id/count-revenue', authorize('admin', 'giam_sat'), toggleWorkerCountRevenue);
-router.post('/:id/manual-jobs', authorize('admin', 'giam_sat'), addManualJobToWorker);
-router.delete('/:id/manual-jobs/:jobId', authorize('admin', 'giam_sat'), removeManualJobFromWorker);
-router.get('/:workerId/performance', authorize('admin', 'giam_sat'), getWorkerPerformance);
-router.get('/:workerId/performance/daily', authorize('admin', 'giam_sat'), getWorkerDailyPerformancePercentage);
-router.get('/:id', authorize('admin', 'giam_sat', 'ktv'), getWorkerById);
-router.post('/', authorize('admin'), createWorker);
-router.put('/:id', authorize('admin'), updateWorker);
-router.delete('/:id', authorize('admin'), deleteWorker);
+router.get('/', access(['admin', 'giam_sat', 'ktv'], 'workers.available'), getAllWorkers);
+router.post('/import', access(['admin', 'giam_sat'], 'workers.main'), bulkImportWorkers);
+router.get('/available', access(['admin', 'giam_sat', 'ktv'], 'workers.available'), getAvailableWorkers);
+router.get('/busy', access(['admin', 'giam_sat'], 'workers.main'), getBusyWorkersWithCars);
+router.get('/kpi', access(['admin', 'giam_sat', 'ktv'], 'workers.kpi'), getWorkerKpi);
+router.get('/kpi/all', access(['admin', 'giam_sat'], 'workers.main'), getAllWorkersKpi);
+router.get('/revenue/chart', access(['admin', 'giam_sat'], 'reports.revenue'), getWorkerRevenueChart);
+router.get('/revenue/weekly-summary', access(['admin', 'giam_sat'], 'reports.revenue'), getWorkerWeeklyRevenueSummary);
+router.patch('/:id/count-revenue', access(['admin', 'giam_sat'], 'workers.main'), toggleWorkerCountRevenue);
+router.post('/:id/manual-jobs', access(['admin', 'giam_sat'], 'workers.main'), addManualJobToWorker);
+router.delete('/:id/manual-jobs/:jobId', access(['admin', 'giam_sat'], 'workers.main'), removeManualJobFromWorker);
+router.get('/:workerId/performance', access(['admin', 'giam_sat'], 'workers.main'), getWorkerPerformance);
+router.get('/:workerId/performance/daily', access(['admin', 'giam_sat'], 'workers.main'), getWorkerDailyPerformancePercentage);
+router.get('/:id', access(['admin', 'giam_sat', 'ktv'], 'workers.available'), getWorkerById);
+router.post('/', access(['admin'], 'system.users'), createWorker);
+router.put('/:id', access(['admin'], 'system.users'), updateWorker);
+router.delete('/:id', access(['admin'], 'system.users'), deleteWorker);
 
 module.exports = router;

@@ -153,4 +153,7 @@ const repairOrderItemSchema = new Schema({
   },
 }, { timestamps: true });
 
+repairOrderItemSchema.index({ createdAt: -1 });
+repairOrderItemSchema.index({ 'workerAssignments.worker': 1, createdAt: -1 });
+
 module.exports = mongoose.model('RepairOrderItem', repairOrderItemSchema);

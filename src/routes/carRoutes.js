@@ -1,27 +1,25 @@
 const express = require('express');
 const router = express.Router();
 const carController = require('../controllers/carController');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, access } = require('../middleware/auth');
 
 router.use(authenticate);
 
-router.get('/stats', authorize('admin', 'giam_sat', 'ktv'), carController.getCarStats);
-router.get('/working-pending', authorize('admin', 'giam_sat', 'ktv'), carController.getWorkingAndPendingCars);
-router.get('/by-location/:locationId', authorize('admin', 'giam_sat', 'ktv'), carController.getCarsByLocation);
-router.get('/by-plate/:plateNumber', authorize('admin', 'giam_sat', 'ktv'), carController.getCarByPlateNumber);
-router.get('/overdue', authorize('admin', 'giam_sat', 'ktv'), carController.getOverdueCars);
-router.get('/repair-history', authorize('admin', 'giam_sat', 'ktv'), carController.getRepairHistory);
-router.get('/:id/repair-items', authorize('admin', 'giam_sat', 'ktv'), carController.getCarRepairItems);
-router.put('/:id/repair-items/assignments', authorize('admin', 'giam_sat'), carController.assignRepairItemWorkers);
-router.put('/:id/repair-items/manual', authorize('admin', 'giam_sat'), carController.saveManualRepairItems);
-router.get('/:id/workers', authorize('admin', 'giam_sat'), carController.getCarWorkers);
-router.get('/:id/workers/history', authorize('admin', 'giam_sat'), carController.getCarWorkersHistory);
-router.get('/:id/workers/export', authorize('admin', 'giam_sat'), carController.exportCarWorkersReport);
-router.get('/', authorize('admin', 'giam_sat', 'ktv'), carController.getAllCars);
-router.get('/:id', authorize('admin', 'giam_sat', 'ktv'), carController.getCarById);
-router.post('/', authorize('admin', 'giam_sat'), carController.createCar);
-router.put('/:id', authorize('admin', 'giam_sat'), carController.updateCar);
-router.put('/:id/status', authorize('admin', 'giam_sat'), carController.updateCarStatus);
-router.delete('/:id', authorize('admin'), carController.deleteCar);
+router.get('/stats', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarStats);
+router.get('/working-pending', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getWorkingAndPendingCars);
+router.get('/by-location/:locationId', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarsByLocation);
+router.get('/by-plate/:plateNumber', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarByPlateNumber);
+router.get('/overdue', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getOverdueCars);
+router.get('/repair-history', access(['admin', 'giam_sat', 'ktv'], 'workers.repair-history'), carController.getRepairHistory);
+router.get('/:id/repair-items', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarRepairItems);
+router.put('/:id/repair-items/assignments', access(['admin', 'giam_sat'], 'cars.add'), carController.assignRepairItemWorkers);
+router.put('/:id/repair-items/manual', access(['admin', 'giam_sat'], 'cars.add'), carController.saveManualRepairItems);
+router.get('/:id/workers/history', access(['admin', 'giam_sat'], 'cars.add'), carController.getCarWorkersHistory);
+router.get('/', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getAllCars);
+router.get('/:id', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarById);
+router.post('/', access(['admin', 'giam_sat'], 'cars.add'), carController.createCar);
+router.put('/:id', access(['admin', 'giam_sat'], 'cars.add'), carController.updateCar);
+router.put('/:id/status', access(['admin', 'giam_sat'], 'cars.add'), carController.updateCarStatus);
+router.delete('/:id', access(['admin'], 'cars.delete'), carController.deleteCar);
 
 module.exports = router;

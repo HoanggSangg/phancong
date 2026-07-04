@@ -10,7 +10,7 @@ const {
   updateUser,
   deleteUser,
 } = require('../controllers/authController');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, access } = require('../middleware/auth');
 const { setupAuditLog } = require('../utils/auditLog');
 
 const withAudit = (req, res, next) => {
@@ -22,9 +22,9 @@ router.post('/register', withAudit, register);
 router.post('/login', withAudit, login);
 router.get('/me', authenticate, getMe);
 
-router.get('/users', authenticate, authorize('admin'), getUsers);
-router.post('/users', authenticate, authorize('admin'), createUser);
-router.put('/users/:id', authenticate, authorize('admin'), updateUser);
-router.delete('/users/:id', authenticate, authorize('admin'), deleteUser);
+router.get('/users', authenticate, access(['admin'], 'system.users'), getUsers);
+router.post('/users', authenticate, access(['admin'], 'system.users'), createUser);
+router.put('/users/:id', authenticate, access(['admin'], 'system.users'), updateUser);
+router.delete('/users/:id', authenticate, access(['admin'], 'system.users'), deleteUser);
 
 module.exports = router;

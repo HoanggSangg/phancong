@@ -1,28 +1,21 @@
 /**
- * Giữ tối đa N bản ghi mới nhất cho mỗi collection (mặc định 5000).
- * Xóa các bản ghi cũ hơn theo createdAt (và _id nếu trùng thời gian).
- *
- * Collections: Car, Worker, User, Location, Supervisor, Team,
- *              Wokers, RepairOrderItem, OperationLog
+ * Dọn dữ liệu DB theo chính sách phân tầng (xem src/utils/trimCollections.js).
  *
  * Usage:
  *   node scripts/trimCollectionsToMax.js
  *   node scripts/trimCollectionsToMax.js --apply
- *   node scripts/trimCollectionsToMax.js --apply --max=5000
  */
 
 require('dotenv').config();
 
 const mongoose = require('mongoose');
-const { trimAllCollections, DEFAULT_MAX_KEEP } = require('../src/utils/trimCollections');
+const {
+  trimAllCollections,
+  getTrimSummary,
+} = require('../src/utils/trimCollections');
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/phancong';
 const APPLY = process.argv.includes('--apply');
-
-const maxArg = process.argv.find((arg) => arg.startsWith('--max='));
-const MAX_KEEP = maxArg
-  ? Math.max(1, parseInt(maxArg.split('=')[1], 10) || DEFAULT_MAX_KEEP)
-  : Math.max(1, parseInt(process.env.COLLECTION_MAX_RECORDS || String(DEFAULT_MAX_KEEP), 10));
 
 const formatDate = (value) => {
   if (!value) return '—';
@@ -30,22 +23,26 @@ const formatDate = (value) => {
 };
 
 async function main() {
+  const summary = getTrimSummary();
+
   await mongoose.connect(MONGODB_URI);
   console.log(`Connected: ${MONGODB_URI}`);
   console.log(APPLY ? 'Mode: APPLY (xóa dữ liệu cũ)' : 'Mode: DRY-RUN (chỉ xem, không ghi)');
-  console.log(`Giới hạn mỗi collection: ${MAX_KEEP} bản ghi mới nhất\n`);
+  console.log('Chính sách trim:');
+  console.log(`  Car: delivered >${summary.deliveredCarMonths} tháng, max ${summary.carMax}`);
+  console.log(`  RepairOrderItem: max ${summary.repairItemMax}`);
+  console.log(`  Wokers: max ${summary.wokersMax}`);
+  console.log(`  OperationLog: >${summary.operationLogDays} ngày`);
+  console.log(`  Bỏ qua: ${summary.skip.join(', ')}\n`);
 
-  const results = await trimAllCollections({
-    maxKeep: MAX_KEEP,
-    dryRun: !APPLY,
-  });
+  const results = await trimAllCollections({ dryRun: !APPLY });
 
   console.log('=== KẾT QUẢ ===');
   let totalDeleted = 0;
 
   results.forEach((row) => {
     if (row.skipped) {
-      console.log(`[${row.collection}] ${row.total} bản ghi — OK, chưa vượt ${MAX_KEEP}`);
+      console.log(`[${row.collection}] ${row.total} bản ghi — OK (${row.policy || '—'})`);
       return;
     }
 
@@ -53,7 +50,7 @@ async function main() {
     console.log(
       `[${row.collection}] Tổng ${row.total} → giữ ${row.kept}, `
       + `${APPLY ? 'đã xóa' : 'sẽ xóa'} ${row.deleted} `
-      + `(cắt từ ${formatDate(row.cutoffAt)})`
+      + `(${row.policy || '—'}, từ ${formatDate(row.cutoffAt)})`,
     );
   });
 

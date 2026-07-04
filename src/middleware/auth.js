@@ -1,8 +1,11 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { setupAuditLog } = require('../utils/auditLog');
+const { hasPermission, usesCustomPermissions } = require('../utils/permissions');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'phancong-dev-secret-change-me';
+const USER_CACHE_TTL_MS = 60_000;
+const userCache = new Map();
 
 const authenticate = async (req, res, next) => {
   try {
@@ -14,11 +17,23 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
+    const cached = userCache.get(String(decoded.userId));
+    if (cached && cached.expiresAt > Date.now()) {
+      req.user = cached.user;
+      setupAuditLog(req, res);
+      return next();
+    }
+
     const user = await User.findById(decoded.userId).select('-password');
 
     if (!user || !user.isActive) {
       return res.status(401).json({ message: 'Tài khoản không hợp lệ hoặc đã bị khóa' });
     }
+
+    userCache.set(String(decoded.userId), {
+      user,
+      expiresAt: Date.now() + USER_CACHE_TTL_MS,
+    });
 
     req.user = user;
     setupAuditLog(req, res);
@@ -28,16 +43,27 @@ const authenticate = async (req, res, next) => {
   }
 };
 
-const authorize = (...roles) => (req, res, next) => {
+const access = (roles, permission) => (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ message: 'Chưa đăng nhập' });
   }
 
-  if (!roles.includes(req.user.role)) {
+  if (req.user.role === 'admin') {
+    return next();
+  }
+
+  if (usesCustomPermissions(req.user)) {
+    if (permission && hasPermission(req.user, permission)) {
+      return next();
+    }
     return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
   }
 
-  return next();
+  if (roles.includes(req.user.role)) {
+    return next();
+  }
+
+  return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
 };
 
 const signToken = (userId) => jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
@@ -55,7 +81,7 @@ const sanitizeUser = (user) => ({
 
 module.exports = {
   authenticate,
-  authorize,
+  access,
   signToken,
   sanitizeUser,
   JWT_SECRET,

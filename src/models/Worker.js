@@ -86,4 +86,6 @@ const workerSchema = new Schema({
   }
 }, { timestamps: true });
 
+workerSchema.index({ status: 1 });
+
 module.exports = mongoose.model('Worker', workerSchema);

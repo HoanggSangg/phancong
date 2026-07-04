@@ -131,4 +131,10 @@ carSchema.methods.getCurrentStatusLabel = function () {
   return this.constructor.getStatusLabel(this.status);
 };
 
+carSchema.index({ currentDate: 1, status: 1 });
+carSchema.index({ status: 1 });
+carSchema.index({ plateNumber: 1, currentDate: 1 });
+carSchema.index({ location: 1, status: 1 });
+carSchema.index({ 'workers.worker': 1, status: 1 });
+
 module.exports = mongoose.model('Car', carSchema);

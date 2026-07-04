@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, access } = require('../middleware/auth');
 
 const {
   getAllTeams,
@@ -14,12 +14,12 @@ const {
 
 router.use(authenticate);
 
-router.get('/', authorize('admin', 'giam_sat'), getAllTeams);
-router.get('/:teamId', authorize('admin', 'giam_sat'), getTeamById);
-router.post('/', authorize('admin'), createTeam);
-router.put('/:teamId', authorize('admin'), updateTeam);
-router.delete('/:teamId', authorize('admin'), deleteTeam);
-router.post('/:teamId/workers', authorize('admin'), addWorkerToTeam);
-router.delete('/:teamId/workers/:workerId', authorize('admin'), removeWorkerFromTeam);
+router.get('/', access(['admin', 'giam_sat'], 'teams.manage'), getAllTeams);
+router.get('/:teamId', access(['admin', 'giam_sat'], 'teams.manage'), getTeamById);
+router.post('/', access(['admin'], 'system.locations'), createTeam);
+router.put('/:teamId', access(['admin'], 'system.locations'), updateTeam);
+router.delete('/:teamId', access(['admin'], 'system.locations'), deleteTeam);
+router.post('/:teamId/workers', access(['admin'], 'system.locations'), addWorkerToTeam);
+router.delete('/:teamId/workers/:workerId', access(['admin'], 'system.locations'), removeWorkerFromTeam);
 
 module.exports = router;

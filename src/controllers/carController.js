@@ -18,6 +18,24 @@ const {
   buildCountRevenueMap,
   resolveRepairHistoryWorkerFilter,
 } = require('../utils/revenueHelpers');
+const {
+  releaseWorkers,
+  updateWorkerStatusDefault,
+  populateCarWorkers,
+} = require('../utils/workerStatus');
+
+const CAR_LIST_SELECT = '-workerLogs -statusHistory';
+const CAR_LIST_POPULATE = [
+  { path: 'workers.worker', select: 'name' },
+  { path: 'supervisor', select: 'name' },
+  { path: 'location', select: 'name' },
+];
+
+const findCarsForList = (filter = {}) =>
+  Car.find(filter)
+    .select(CAR_LIST_SELECT)
+    .populate(CAR_LIST_POPULATE)
+    .lean();
 
 const normalizeROKey = (roNumber = '', roCode = '') => {
   const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
@@ -50,10 +68,12 @@ const mapExternalItemToRepairOrder = (item, car) => ({
 // Lấy tất cả xe
 const getAllCars = async (req, res) => {
   try {
-    const cars = await Car.find({})
-      .populate('workers.worker', 'name')
-      .populate('supervisor', 'name')
-      .populate('location', 'name');
+    const filter = {};
+    if (req.query.location) {
+      filter.location = req.query.location;
+    }
+
+    const cars = await findCarsForList(filter);
 
     res.json(cars);
   } catch (error) {
@@ -168,18 +188,24 @@ const createCar = async (req, res) => {
     }
 
     // ✅ Kiểm tra thợ có đang bận không
+    const workerIds = data.workers.map((w) => w.worker).filter(Boolean);
     const busyErrors = [];
-    for (const w of data.workers) {
-      const workerId = w.worker;
 
-      const existingCar = await Car.findOne({
+    if (workerIds.length > 0) {
+      const busyCars = await Car.find({
         status: 'working',
-        'workers.worker': workerId,
+        'workers.worker': { $in: workerIds },
       }).populate('workers.worker');
 
-      if (existingCar) {
-        const worker = existingCar.workers.find(x => x.worker._id.equals(workerId));
-        busyErrors.push(`Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
+      for (const w of data.workers) {
+        const existingCar = busyCars.find((car) =>
+          car.workers.some((entry) => entry.worker?._id?.equals(w.worker))
+        );
+
+        if (existingCar) {
+          const worker = existingCar.workers.find((x) => x.worker._id.equals(w.worker));
+          busyErrors.push(`Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
+        }
       }
     }
 
@@ -358,13 +384,6 @@ const updateCarStatus = async (req, res) => {
     const carWorkerIds = car.workers.map(w => w.worker._id.toString());
 
     // **LOGIC MỚI: KIỂM TRA CHUYỂN TRẠNG THÁI HỢP LỆ**
-
-    // 1. Từ done chỉ có thể chuyển sang waiting_wash hoặc waiting_handover
-    // if (currentStatus === 'done' && !['waiting_wash', 'waiting_handover'].includes(status)) {
-    //   return res.status(400).json({
-    //     message: 'Từ trạng thái "sửa xong" chỉ có thể chuyển sang "chờ rửa xe" hoặc "chờ giao xe"'
-    //   });
-    // }
     if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
       const oldWorkerIds = [...carWorkerIds];
 
@@ -414,29 +433,15 @@ const updateCarStatus = async (req, res) => {
 
         await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
 
-        for (const oldWorkerId of oldWorkerIds) {
-          if (oldWorkerId !== newWorkerId.toString()) {
-            const allCarsOfOldWorker = await Car.find({
-              'workers.worker': oldWorkerId,
-              _id: { $ne: car._id }
-            });
-
-            const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-            const hasWaitingWash = allCarsOfOldWorker.some(c => c.status === 'waiting_wash');
-            const hasAdditionalRepair = allCarsOfOldWorker.some(c => c.status === 'additional_repair');
-            const hasWaitingHandover = allCarsOfOldWorker.some(c => c.status === 'waiting_handover');
-
-            await Worker.findByIdAndUpdate(oldWorkerId, {
-              status: (hasWorking || hasWaitingWash || hasAdditionalRepair || hasWaitingHandover)
-                ? 'busy'
-                : 'available'
-            });
-          }
-        }
+        await releaseWorkers(
+          oldWorkerIds.filter((id) => id !== newWorkerId.toString()),
+          car._id,
+          'extended'
+        );
 
         return res.status(200).json({
           message: 'Rửa xe xong, chuyển sang chờ giao xe và gán người giao xe thành công',
-          car: await Car.findById(id).populate('workers.worker')
+          car: await populateCarWorkers(id)
         });
       }
 
@@ -454,27 +459,11 @@ const updateCarStatus = async (req, res) => {
       car.status = status;
       await car.save();
 
-      for (const oldWorkerId of oldWorkerIds) {
-        const allCarsOfOldWorker = await Car.find({
-          'workers.worker': oldWorkerId,
-          _id: { $ne: car._id }
-        });
-
-        const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-        const hasWaitingWash = allCarsOfOldWorker.some(c => c.status === 'waiting_wash');
-        const hasAdditionalRepair = allCarsOfOldWorker.some(c => c.status === 'additional_repair');
-        const hasWaitingHandover = allCarsOfOldWorker.some(c => c.status === 'waiting_handover');
-
-        await Worker.findByIdAndUpdate(oldWorkerId, {
-          status: (hasWorking || hasWaitingWash || hasAdditionalRepair || hasWaitingHandover)
-            ? 'busy'
-            : 'available'
-        });
-      }
+      await releaseWorkers(oldWorkerIds, car._id, 'extended');
 
       return res.status(200).json({
         message: 'Rửa xe xong, chuyển sang chờ giao xe - khách tự lấy xe',
-        car: await Car.findById(id).populate('workers.worker')
+        car: await populateCarWorkers(id)
       });
     }
     // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_WASH**
@@ -521,27 +510,14 @@ const updateCarStatus = async (req, res) => {
 
         await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
 
-        // Cập nhật trạng thái cho thợ cũ
-        for (const oldWorkerId of carWorkerIds) {
-          const otherCars = await Car.find({
-            'workers.worker': oldWorkerId,
-            _id: { $ne: car._id }
-          });
-
-          const hasWorking = otherCars.some(c => c.status === 'working');
-          const hasPending = otherCars.some(c => c.status === 'pending');
-
-          await Worker.findByIdAndUpdate(oldWorkerId, {
-            status: hasWorking ? 'busy' : 'available'
-          });
-        }
+        await releaseWorkers(carWorkerIds, car._id, 'workingOnly');
 
         car.status = status;
         await car.save();
 
         return res.status(200).json({
           message: 'Chuyển sang chờ rửa xe với thợ mới thành công',
-          car: await Car.findById(id).populate('workers.worker')
+          car: await populateCarWorkers(id)
         });
 
       } else {
@@ -555,7 +531,7 @@ const updateCarStatus = async (req, res) => {
 
         return res.status(200).json({
           message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công',
-          car: await Car.findById(id).populate('workers.worker')
+          car: await populateCarWorkers(id)
         });
       }
     }
@@ -566,59 +542,14 @@ const updateCarStatus = async (req, res) => {
 
     // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_HANDOVER**
     if (currentStatus === 'done' && status === 'waiting_handover') {
-      // Thợ cũ rảnh vì không cần làm gì thêm
-      for (const workerId of carWorkerIds) {
-        const allCarsOfWorker = await Car.find({
-          'workers.worker': workerId,
-          _id: { $ne: car._id } // bỏ qua xe hiện tại
-        });
-        const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-        const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-        if (hasWorking) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-        } else if (hasPending) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-        } else {
-          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-        }
-      }
+      await releaseWorkers(carWorkerIds, car._id, 'deliveredStyle');
 
       car.status = status;
       await car.save();
 
       return res.status(200).json({
         message: 'Chuyển sang chờ giao xe thành công',
-        car: await Car.findById(id).populate('workers.worker')
-      });
-    }
-
-    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH SANG WAITING_HANDOVER**
-    if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
-      // Rửa xe xong, thợ rảnh
-      for (const workerId of carWorkerIds) {
-        const allCarsOfWorker = await Car.find({
-          'workers.worker': workerId,
-          _id: { $ne: car._id } // bỏ qua xe hiện tại
-        });
-        const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-        const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-        if (hasWorking) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-        } else if (hasPending) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-        } else {
-          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-        }
-      }
-
-      car.status = status;
-      await car.save();
-
-      return res.status(200).json({
-        message: 'Rửa xe xong, chuyển sang chờ giao xe thành công',
-        car: await Car.findById(id).populate('workers.worker')
+        car: await populateCarWorkers(id)
       });
     }
 
@@ -675,28 +606,14 @@ const updateCarStatus = async (req, res) => {
       // Thợ mới → bận
       await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
 
-      // Thợ cũ → kiểm tra trạng thái (có còn làm xe khác không?)
-      for (const oldWorkerId of oldWorkerIds) {
-        const allCarsOfOldWorker = await Car.find({
-          'workers.worker': oldWorkerId,
-          _id: { $ne: car._id } // bỏ qua xe hiện tại vì đã thay thợ
-        });
+      await releaseWorkers(oldWorkerIds, car._id, 'workingOnly');
 
-        const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-        const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-        await Worker.findByIdAndUpdate(oldWorkerId, {
-          status: hasWorking ? 'busy' : 'available'
-        });
-      }
-
-      // Cập nhật trạng thái xe
       car.status = status;
       await car.save();
 
       return res.status(200).json({
         message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
-        car: await Car.findById(id).populate('workers.worker')
+        car: await populateCarWorkers(id)
       });
     }
 
@@ -747,48 +664,21 @@ const updateCarStatus = async (req, res) => {
 
       await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
 
-      for (const oldWorkerId of oldWorkerIds) {
-        const allCarsOfOldWorker = await Car.find({
-          'workers.worker': oldWorkerId,
-          _id: { $ne: car._id }
-        });
-        const hasWorking = allCarsOfOldWorker.some(c => c.status === 'working');
-        const hasPending = allCarsOfOldWorker.some(c => c.status === 'pending');
-
-        await Worker.findByIdAndUpdate(oldWorkerId, {
-          status: hasWorking ? 'busy' : 'available'
-        });
-      }
+      await releaseWorkers(oldWorkerIds, car._id, 'workingOnly');
 
       car.status = status;
       await car.save();
 
       return res.status(200).json({
         message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
-        car: await Car.findById(id).populate('workers.worker')
+        car: await populateCarWorkers(id)
       });
     }
 
 
     // **LOGIC MỚI: XỬ LÝ CHUYỂN SANG DELIVERED**
     if (status === 'delivered') {
-      // Tất cả thợ liên quan đều rảnh
-      for (const workerId of carWorkerIds) {
-        const allCarsOfWorker = await Car.find({
-          'workers.worker': workerId,
-          _id: { $ne: car._id } // bỏ qua xe hiện tại
-        });
-        const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-        const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-
-        if (hasWorking) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-        } else if (hasPending) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-        } else {
-          await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-        }
-      }
+      await releaseWorkers(carWorkerIds, car._id, 'deliveredStyle');
 
       car.status = status;
       await car.save();
@@ -801,7 +691,7 @@ const updateCarStatus = async (req, res) => {
 
       return res.status(200).json({
         message: 'Xe đã được giao thành công',
-        car: await Car.findById(id).populate('workers.worker')
+        car: await populateCarWorkers(id)
       });
     }
 
@@ -830,23 +720,10 @@ const updateCarStatus = async (req, res) => {
 
     // **LOGIC CŨ: Cập nhật trạng thái thợ**
     for (const workerId of carWorkerIds) {
-      const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
-
-      const hasWorking = allCarsOfWorker.some(c => c.status === 'working');
-      const hasPending = allCarsOfWorker.some(c => c.status === 'pending');
-      const hasWaitingWash = allCarsOfWorker.some(c => c.status === 'waiting_wash');
-      const hasAdditionalRepair = allCarsOfWorker.some(c => c.status === 'additional_repair');
-
-      if (hasWorking || hasWaitingWash || hasAdditionalRepair) {
-        await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-      } else if (hasPending) {
-        await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-      } else {
-        await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-      }
+      await updateWorkerStatusDefault(workerId);
     }
 
-    const updatedCar = await Car.findById(id).populate('workers.worker');
+    const updatedCar = await populateCarWorkers(id);
     return res.status(200).json({
       message: `Cập nhật trạng thái xe thành công: ${status}`,
       car: updatedCar
@@ -859,10 +736,7 @@ const getCarsByLocation = async (req, res) => {
   const { locationId } = req.params;
 
   try {
-    const cars = await Car.find({ location: locationId })
-      .populate('workers.worker', 'name')
-      .populate('supervisor', 'name')
-      .populate('location', 'name'); // Giả sử bạn có tên địa điểm
+    const cars = await findCarsForList({ location: locationId });
 
     return res.status(200).json(cars);
   } catch (error) {
@@ -937,34 +811,45 @@ const getCarStats = async (req, res) => {
       'additional_repair'
     ];
 
-    // Lấy tất cả các location
     const locations = await Location.find();
 
-    // Đếm tổng số xe theo từng trạng thái (tất cả địa điểm)
-    const totalCounts = await Promise.all(
-      statuses.map((status) => Car.countDocuments({ status }))
-    );
-    const allLocation = statuses.reduce((acc, status, index) => {
-      acc[status] = totalCounts[index];
+    const [totalCounts, locationCounts] = await Promise.all([
+      Car.aggregate([
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      Car.aggregate([
+        { $match: { location: { $ne: null } } },
+        { $group: { _id: { location: '$location', status: '$status' }, count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const totalCountMap = totalCounts.reduce((acc, row) => {
+      acc[row._id] = row.count;
       return acc;
     }, {});
 
-    // Đếm theo từng địa điểm
+    const allLocation = statuses.reduce((acc, status) => {
+      acc[status] = totalCountMap[status] || 0;
+      return acc;
+    }, {});
+
+    const locationCountMap = locationCounts.reduce((acc, row) => {
+      const locationId = row._id.location?.toString();
+      if (!locationId) return acc;
+      if (!acc[locationId]) acc[locationId] = {};
+      acc[locationId][row._id.status] = row.count;
+      return acc;
+    }, {});
+
     const byLocation = {};
-
     for (const loc of locations) {
-      const counts = await Promise.all(
-        statuses.map((status) =>
-          Car.countDocuments({ status, location: loc._id })
-        )
-      );
-
+      const locId = loc._id.toString();
       byLocation[loc._id] = {
         name: loc.name,
-        ...statuses.reduce((acc, status, index) => {
-          acc[status] = counts[index];
+        ...statuses.reduce((acc, status) => {
+          acc[status] = locationCountMap[locId]?.[status] || 0;
           return acc;
-        }, {})
+        }, {}),
       };
     }
 
@@ -987,22 +872,28 @@ const getWorkingAndPendingCars = async (req, res) => {
       'waiting_wash',
       'waiting_handover',
       'delivered',
-      'additional_repair'
+      'additional_repair',
     ];
 
-    const result = {};
+    const filter = { status: { $in: statuses } };
+    if (req.query.date) {
+      filter.currentDate = String(req.query.date);
+    }
 
-    await Promise.all(
-      statuses.map(async (status) => {
-        const cars = await Car.find({ status })
-          .populate('workers.worker', 'name')
-          .populate('supervisor', 'name')
-              .populate('location', 'name');
-        result[status] = cars;
-      })
-    );
+    const cars = await findCarsForList(filter);
 
-    res.json(result); // trả về đối tượng với từng trạng thái là key
+    const result = statuses.reduce((acc, status) => {
+      acc[status] = [];
+      return acc;
+    }, {});
+
+    cars.forEach((car) => {
+      if (result[car.status]) {
+        result[car.status].push(car);
+      }
+    });
+
+    res.json(result);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1012,12 +903,12 @@ const getWorkingAndPendingCars = async (req, res) => {
 const getOverdueCars = async (req, res) => {
   try {
     const allCars = await Car.find({
-      deliveryTime: { $exists: true },
+      deliveryTime: { $exists: true, $ne: '' },
       status: { $ne: 'delivered' },
     })
-      .populate('workers.worker', 'name')
-      .populate('supervisor', 'name')           // optional nếu bạn cần hiển thị giám sát
-      .populate('location', 'name');            // thêm dòng này
+      .select(CAR_LIST_SELECT)
+      .populate(CAR_LIST_POPULATE)
+      .lean();
 
     const overdueCars = allCars.filter(car => {
       const [date, time] = car.deliveryTime.split(' ');
@@ -1034,123 +925,6 @@ const getOverdueCars = async (req, res) => {
   }
 };
 
-
-const getCarWorkers = async (req, res) => {
-  try {
-    const { id } = req.params; // ID của xe
-
-    // Tìm xe theo ID và populate thông tin thợ
-    const car = await Car.findById(id)
-      .populate({
-        path: 'workers.worker',
-        select: 'name phone email specialty status' // Chọn các trường cần thiết
-      })
-      .populate('location', 'name address') // Lấy thông tin địa điểm
-      .select('plateNumber status workers externalCarTypeName location condition deliveryTime currentDate currentTime');
-
-    if (!car) {
-      return res.status(404).json({
-        message: 'Xe không tìm thấy'
-      });
-    }
-
-    // Chuẩn bị dữ liệu response
-    const carInfo = {
-      id: car._id,
-      plateNumber: car.plateNumber,
-      status: car.status,
-      carType: car.externalCarTypeName || 'Không xác định',
-      location: car.location ? `${car.location.name} - ${car.location.address}` : 'Không xác định',
-      condition: car.condition || 'Bình thường',
-      deliveryTime: car.deliveryTime || 'Chưa xác định',
-      currentDate: car.currentDate,
-      currentTime: car.currentTime,
-      totalWorkers: car.workers.length
-    };
-
-    // Xử lý danh sách thợ với vai trò và trạng thái
-    const workersList = car.workers.map((workerInfo, index) => {
-      const worker = workerInfo.worker;
-
-      // Xác định nhiệm vụ dựa trên role và status của xe
-      let task = '';
-      switch (car.status) {
-        case 'pending':
-          task = 'Chờ bắt đầu sửa chữa';
-          break;
-        case 'working':
-          task = workerInfo.role === 'main' ? 'Thợ chính - Đang sửa chữa' : 'Thợ phụ - Hỗ trợ sửa chữa';
-          break;
-        case 'done':
-          task = 'Đã hoàn thành sửa chữa';
-          break;
-        case 'waiting_wash':
-          task = 'Chuẩn bị rửa xe hoặc đang rửa xe';
-          break;
-        case 'waiting_handover':
-          task = 'Chờ giao xe cho khách hàng';
-          break;
-        case 'additional_repair':
-          task = workerInfo.role === 'main' ? 'Thợ chính - Đang sửa bổ sung' : 'Thợ phụ - Hỗ trợ sửa bổ sung';
-          break;
-        case 'delivered':
-          task = 'Đã giao xe xong';
-          break;
-        default:
-          task = 'Không xác định';
-      }
-
-      return {
-        index: index + 1,
-        workerId: worker._id,
-        workerName: worker.name,
-        workerPhone: worker.phone || 'Chưa có',
-        workerEmail: worker.email || 'Chưa có',
-        workerSpecialty: worker.specialty || 'Tổng quát',
-        workerStatus: worker.status,
-        role: workerInfo.role === 'main' ? 'Thợ chính' : 'Thợ phụ',
-        currentTask: task,
-        isActive: ['working', 'additional_repair', 'waiting_wash'].includes(car.status)
-      };
-    });
-
-    // Thống kê
-    const statistics = {
-      mainWorkers: workersList.filter(w => w.role === 'Thợ chính').length,
-      assistantWorkers: workersList.filter(w => w.role === 'Thợ phụ').length,
-      busyWorkers: workersList.filter(w => w.workerStatus === 'busy').length,
-      availableWorkers: workersList.filter(w => w.workerStatus === 'available').length
-    };
-
-    return res.status(200).json({
-      success: true,
-      message: 'Lấy danh sách thợ thành công',
-      data: {
-        carInfo,
-        workers: workersList,
-        statistics
-      }
-    });
-
-  } catch (error) {
-    console.error('Lỗi khi lấy danh sách thợ:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Lỗi server khi lấy danh sách thợ',
-      error: error.message
-    });
-  }
-};
-const convertStatusToLabel = (status) => {
-  switch (status) {
-    case 'working': return 'sửa xe';
-    case 'waiting_wash': return 'rửa xe';
-    case 'waiting_handover': return 'chờ bàn giao';
-    case 'additional_repair': return 'sửa bổ sung';
-    case 'done': return 'hoàn thành';
-    default: return status;
-  }
-};
 
 // API để lấy lịch sử thợ của xe (nếu có lưu lịch sử thay đổi thợ)
 const getCarWorkersHistory = async (req, res) => {
@@ -1340,75 +1114,6 @@ const getCarWorkersHistory = async (req, res) => {
   }
 };
 
-
-// API để xuất báo cáo danh sách thợ theo định dạng
-const exportCarWorkersReport = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { format = 'json' } = req.query; // json, csv, xlsx
-
-    const car = await Car.findById(id)
-      .populate('workers.worker', 'name phone email specialty status')
-      .populate('location', 'name address');
-
-    if (!car) {
-      return res.status(404).json({
-        message: 'Xe không tìm thấy'
-      });
-    }
-
-    const reportData = {
-      reportDate: new Date().toISOString(),
-      carInfo: {
-        plateNumber: car.plateNumber,
-        status: car.status,
-        carType: car.externalCarTypeName,
-        location: car.location?.name
-      },
-      workers: car.workers.map(w => ({
-        name: w.worker.name,
-        phone: w.worker.phone,
-        email: w.worker.email,
-        specialty: w.worker.specialty,
-        role: w.role,
-        status: w.worker.status
-      }))
-    };
-
-    switch (format.toLowerCase()) {
-      case 'csv':
-        // Chuyển đổi sang CSV format
-        const csvHeaders = 'Tên thợ,Số điện thoại,Email,Chuyên môn,Vai trò,Trạng thái\n';
-        const csvRows = reportData.workers.map(w =>
-          `${w.name},${w.phone || ''},${w.email || ''},${w.specialty || ''},${w.role},${w.status}`
-        ).join('\n');
-
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="workers_report_${car.plateNumber}.csv"`);
-        return res.send('\uFEFF' + csvHeaders + csvRows); // \uFEFF for UTF-8 BOM
-
-      case 'xlsx':
-        // Nếu sử dụng thư viện như xlsx
-        return res.status(200).json({
-          message: 'Xuất Excel chưa được implement',
-          data: reportData
-        });
-
-      default: // json
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="workers_report_${car.plateNumber}.json"`);
-        return res.status(200).json(reportData);
-    }
-
-  } catch (error) {
-    console.error('Lỗi khi xuất báo cáo:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Lỗi server khi xuất báo cáo',
-      error: error.message
-    });
-  }
-};
 const getRepairHistory = async (req, res) => {
   try {
     const { date, from, to, workerId: queryWorkerId } = req.query;
@@ -1510,10 +1215,34 @@ const getRepairHistory = async (req, res) => {
       totalCars: new Set(result.map((item) => `${item.plateNumber}__${item.carDate}`)).size,
     };
 
+    const page = parseInt(req.query.page, 10);
+    const limit = parseInt(req.query.limit, 10);
+    const usePagination = Number.isFinite(page) && page > 0 && Number.isFinite(limit) && limit > 0;
+
+    let responseItems = result;
+    if (usePagination) {
+      const start = (page - 1) * limit;
+      responseItems = result.slice(start, start + limit);
+    }
+
+    const baseResponse = {
+      ...summary,
+      items: responseItems,
+    };
+
+    if (usePagination) {
+      baseResponse.pagination = {
+        page,
+        limit,
+        total: result.length,
+        totalPages: Math.ceil(result.length / limit),
+      };
+    }
+
     if (req.user.role === 'ktv') {
       return res.json({
-        ...summary,
-        items: result.map(
+        ...baseResponse,
+        items: responseItems.map(
           ({
             amount,
             unitPrice,
@@ -1526,10 +1255,7 @@ const getRepairHistory = async (req, res) => {
       });
     }
 
-    return res.json({
-      ...summary,
-      items: result,
-    });
+    return res.json(baseResponse);
   } catch (error) {
     console.error('Lỗi lấy lịch sử sửa chữa:', error);
     return res.status(500).json({
@@ -1948,9 +1674,7 @@ module.exports = {
   getWorkingAndPendingCars,
   getCarsByLocation,
   getOverdueCars,
-  exportCarWorkersReport,
   getCarWorkersHistory,
-  getCarWorkers,
   getCarRepairItems,
   assignRepairItemWorkers,
   saveManualRepairItems,
