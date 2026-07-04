@@ -49,6 +49,7 @@ const sanitizeUser = (user) => ({
   role: user.role,
   worker: user.worker?._id || user.worker || null,
   isActive: user.isActive,
+  permissions: user.permissions || [],
   createdAt: user.createdAt,
 });
 

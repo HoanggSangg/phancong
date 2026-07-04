@@ -19,6 +19,12 @@ const {
   resolveRepairHistoryWorkerFilter,
 } = require('../utils/revenueHelpers');
 
+const normalizeROKey = (roNumber = '', roCode = '') => {
+  const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
+  const code = String(roCode || '').trim().toUpperCase().replace(/\s/g, '');
+  return number || code || '';
+};
+
 const mapExternalItemToRepairOrder = (item, car) => ({
   car: car._id,
   plateNumber: car.plateNumber,
@@ -100,15 +106,27 @@ const createCar = async (req, res) => {
     data.externalCarTypeName = externalCarTypeName;
     delete data.carType;
 
-    // Kiểm tra biển số trong ngày
-    const isPlateExistToday = await Car.findOne({
+    // Cùng biển số trong ngày chỉ chặn khi trùng RO
+    const carsToday = await Car.find({
       plateNumber: data.plateNumber,
       currentDate: data.currentDate,
-    });
+    }).select('roNumber roCode plateNumber');
 
-    if (isPlateExistToday) {
+    const incomingRO = normalizeROKey(data.roNumber, data.roCode);
+
+    if (incomingRO) {
+      const duplicateRO = carsToday.find(
+        (car) => normalizeROKey(car.roNumber, car.roCode) === incomingRO
+      );
+
+      if (duplicateRO) {
+        return res.status(400).json({
+          message: `Xe ${data.plateNumber} với RO ${incomingRO} đã được tạo trong ngày hôm nay`,
+        });
+      }
+    } else if (carsToday.length > 0) {
       return res.status(400).json({
-        message: `Xe với biển số ${data.plateNumber} đã được tạo trong ngày hôm nay`,
+        message: `Xe ${data.plateNumber} đã có trong ngày hôm nay. Vui lòng tra cứu và nhập số RO để thêm lệnh mới.`,
       });
     }
 
@@ -205,14 +223,18 @@ const createCar = async (req, res) => {
       );
     }
 
-    // ✅ Sau khi thêm xe có thợ: cập nhật trạng thái thợ và tạo bản ghi Wokers
+    // ✅ Sau khi thêm xe có thợ: chỉ đánh bận khi xe không ở trạng thái chờ sửa
     if (data.workers.length > 0) {
       const vieclamChiTiet = repairItems.length > 0
         ? repairItems.map((item) => item.content).filter(Boolean).join('; ')
         : '';
 
-      for (const w of data.workers) {
-        await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
+      const shouldMarkWorkersBusy = car.status && car.status !== 'pending';
+
+      if (shouldMarkWorkersBusy) {
+        for (const w of data.workers) {
+          await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
+        }
       }
 
       await Wokers.insertMany(
@@ -220,7 +242,7 @@ const createCar = async (req, res) => {
           worker: w.worker,
           car: car._id,
           vieclamChiTiet,
-          status: 'co_viec',
+          status: shouldMarkWorkersBusy ? 'co_viec' : 'chua_co_viec',
         }))
       );
     }
@@ -858,11 +880,20 @@ const deleteCar = async (req, res) => {
 
     req.auditDeleted = { label: car.plateNumber };
 
+    await RepairOrderItem.deleteMany({ car: car._id });
+    await Wokers.deleteMany({ car: car._id });
+
     for (const w of car.workers) {
-      const stillHasJob = await Car.exists({ 'workers.worker': w.worker });
-      if (!stillHasJob) {
-        await Worker.findByIdAndUpdate(w.worker, { status: 'available' });
-      }
+      const workerId = w.worker;
+      const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
+
+      const hasActiveJob = allCarsOfWorker.some((c) =>
+        ['working', 'waiting_wash', 'additional_repair'].includes(c.status)
+      );
+
+      await Worker.findByIdAndUpdate(workerId, {
+        status: hasActiveJob ? 'busy' : 'available',
+      });
     }
 
     if (car.supervisor) {
@@ -871,12 +902,6 @@ const deleteCar = async (req, res) => {
         await Supervisor.findByIdAndUpdate(car.supervisor, { status: 'available' });
       }
     }
-
-    // ✅ Đóng các công việc của thợ gắn với xe này vì xe đã bị xóa
-    await Wokers.updateMany(
-      { car: car._id, status: 'co_viec' },
-      { status: 'chua_co_viec' }
-    );
 
     return res.status(200).json({ message: `Xe ${car.plateNumber} đã được xóa.` });
   } catch (error) {

@@ -10,6 +10,53 @@ const headers = {
 const normalizePlate = (plate = '') =>
   String(plate).toUpperCase().replace(/\s/g, '');
 
+const fetchVehicleInfo = async (plate) => {
+  const normalized = normalizePlate(plate);
+  if (!normalized) return null;
+
+  const xeRes = await axios.get(`${EXTERNAL_BASE}/xe/${normalized}`, { headers });
+  return xeRes.data;
+};
+
+const fetchLatestQuote = async (plate) => {
+  const normalized = normalizePlate(plate);
+  if (!normalized) return null;
+
+  try {
+    const bgRes = await axios.get(
+      `${EXTERNAL_BASE}/xe/${normalized}/baogia-gan-nhat`,
+      { headers }
+    );
+    return bgRes.data;
+  } catch {
+    return null;
+  }
+};
+
+const buildRawPayload = async ({ plate, baogiaGanNhat }) => {
+  let vehicle = null;
+
+  try {
+    vehicle = await fetchVehicleInfo(plate);
+  } catch {
+    vehicle = null;
+  }
+
+  return {
+    ...(vehicle || {}),
+    baogiaGanNhat,
+  };
+};
+
+const resolvePlateNumber = (plate, vehicle, quote) =>
+  normalizePlate(
+    plate
+    || vehicle?.soXeTimKiem
+    || vehicle?.soXe
+    || quote?.header?.soXe
+    || ''
+  );
+
 const lookupCarOrRO = async (req, res) => {
   try {
     const keyword = String(req.params.keyword || '').trim().toUpperCase();
@@ -22,11 +69,6 @@ const lookupCarOrRO = async (req, res) => {
       });
     }
 
-    // =========================
-    // 1. Tìm theo số RO: RO26010011
-    // cần kèm biển số: ?plate=51G18419
-    // gọi ngoài: /xe/51G18419/RO26010011
-    // =========================
     if (keyword.startsWith('RO')) {
       if (!plateQuery) {
         return res.status(400).json({
@@ -40,76 +82,55 @@ const lookupCarOrRO = async (req, res) => {
         { headers }
       );
 
+      const raw = await buildRawPayload({
+        plate: plateQuery,
+        baogiaGanNhat: roRes.data,
+      });
+
       return res.json({
         success: true,
         type: 'ro',
-        plateNumber: plateQuery,
+        plateNumber: resolvePlateNumber(plateQuery, raw, roRes.data),
         selectedRO: keyword,
-        raw: {
-          baogiaGanNhat: roRes.data,
-        },
+        raw,
       });
     }
 
-    // =========================
-    // 2. Tìm theo mã báo giá TT...
-    // gọi ngoài: /baogia/TT0000000000198
-    // =========================
     if (keyword.startsWith('TT')) {
-      const roRes = await axios.get(`${EXTERNAL_BASE}/baogia/${keyword}`, {
+      const quoteRes = await axios.get(`${EXTERNAL_BASE}/baogia/${keyword}`, {
         headers,
+      });
+
+      const plate = resolvePlateNumber('', null, quoteRes.data);
+      const raw = await buildRawPayload({
+        plate,
+        baogiaGanNhat: quoteRes.data,
       });
 
       return res.json({
         success: true,
         type: 'tt',
-        plateNumber: roRes.data?.header?.soXe?.replace(/\s/g, '') || '',
-        selectedRO: roRes.data?.header?.khoa || keyword,
-        raw: {
-          baogiaGanNhat: roRes.data,
-        },
+        plateNumber: resolvePlateNumber(plate, raw, quoteRes.data),
+        selectedRO: quoteRes.data?.header?.khoa || keyword,
+        raw,
       });
     }
 
-    // =========================
-    // 3. Tìm theo biển số
-    // gọi ngoài:
-    // /xe/{bienso}
-    // /xe/{bienso}/baogia-gan-nhat
-    // =========================
     const plate = normalizePlate(keyword);
-
-    const xeRes = await axios.get(`${EXTERNAL_BASE}/xe/${plate}`, {
-      headers,
-    });
-
-    let baogiaGanNhat = null;
-
-    try {
-      const bgRes = await axios.get(
-        `${EXTERNAL_BASE}/xe/${plate}/baogia-gan-nhat`,
-        { headers }
-      );
-
-      baogiaGanNhat = bgRes.data;
-    } catch (err) {
-      baogiaGanNhat = null;
-    }
+    const vehicle = await fetchVehicleInfo(plate);
+    const baogiaGanNhat = await fetchLatestQuote(plate);
 
     return res.json({
       success: true,
       type: 'plate',
-      plateNumber:
-        xeRes.data?.soXeTimKiem ||
-        xeRes.data?.soXe?.replace(/\s/g, '') ||
-        plate,
+      plateNumber: resolvePlateNumber(plate, vehicle, baogiaGanNhat),
       selectedRO:
-        baogiaGanNhat?.header?.soChungtu ||
-        baogiaGanNhat?.header?.khoa ||
-        xeRes.data?.khoaBaoGiaGanNhat ||
-        '',
+        baogiaGanNhat?.header?.soChungtu
+        || baogiaGanNhat?.header?.khoa
+        || vehicle?.khoaBaoGiaGanNhat
+        || '',
       raw: {
-        ...xeRes.data,
+        ...(vehicle || {}),
         baogiaGanNhat,
       },
     });
@@ -132,15 +153,7 @@ const fetchRepairDetailsForCar = async (plateNumber, roCode = '') => {
     const roRes = await axios.get(`${EXTERNAL_BASE}/xe/${plate}/${ro}`, { headers });
     baogiaGanNhat = roRes.data;
   } else {
-    try {
-      const bgRes = await axios.get(
-        `${EXTERNAL_BASE}/xe/${plate}/baogia-gan-nhat`,
-        { headers }
-      );
-      baogiaGanNhat = bgRes.data;
-    } catch {
-      baogiaGanNhat = null;
-    }
+    baogiaGanNhat = await fetchLatestQuote(plate);
   }
 
   const chiTiet = (baogiaGanNhat?.chiTiet || []).filter((x) => x.huy !== 1);

@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Worker = require('../models/Worker');
 const { signToken, sanitizeUser } = require('../middleware/auth');
+const { sanitizePermissions } = require('../utils/permissions');
 
 const register = async (req, res) => {
   try {
@@ -99,7 +100,7 @@ const getUsers = async (req, res) => {
 
 const createUser = async (req, res) => {
   try {
-    const { username, password, fullName, role, workerId, isActive } = req.body;
+    const { username, password, fullName, role, workerId, isActive, permissions } = req.body;
 
     if (!username?.trim() || !password || !fullName?.trim()) {
       return res.status(400).json({ message: 'Thiếu thông tin tạo tài khoản' });
@@ -126,6 +127,7 @@ const createUser = async (req, res) => {
       role: role || 'ktv',
       worker,
       isActive: isActive !== false,
+      permissions: sanitizePermissions(permissions || []),
     });
 
     return res.status(201).json({
@@ -140,7 +142,7 @@ const createUser = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fullName, role, workerId, isActive, password } = req.body;
+    const { fullName, role, workerId, isActive, password, permissions } = req.body;
 
     const user = await User.findById(id);
     if (!user) {
@@ -166,6 +168,10 @@ const updateUser = async (req, res) => {
         return res.status(400).json({ message: 'Mật khẩu tối thiểu 6 ký tự' });
       }
       user.password = password;
+    }
+
+    if (permissions !== undefined) {
+      user.permissions = sanitizePermissions(permissions);
     }
 
     await user.save();

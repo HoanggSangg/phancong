@@ -5,6 +5,6 @@ const { getOperationLogs } = require('../controllers/auditLogController');
 const router = express.Router();
 
 router.use(authenticate);
-router.get('/', authorize('admin'), getOperationLogs);
+router.get('/', authorize('admin', 'giam_sat'), getOperationLogs);
 
 module.exports = router;

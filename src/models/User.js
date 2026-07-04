@@ -36,6 +36,10 @@ const userSchema = new Schema({
     type: Boolean,
     default: true,
   },
+  permissions: {
+    type: [String],
+    default: [],
+  },
 }, { timestamps: true });
 
 userSchema.pre('save', async function hashPassword(next) {
