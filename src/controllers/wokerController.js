@@ -15,6 +15,10 @@ const {
   REPAIR_ITEMS_WITH_WORKERS_QUERY,
   buildCountRevenueMap,
 } = require('../utils/revenueHelpers');
+const {
+  applyDeductionsToGross,
+  getRevenueDeductions,
+} = require('../utils/revenueDeductions');
 
 const uploadImage = async (image) => {
   const result = await cloudinary.uploader.upload(image, {
@@ -30,6 +34,15 @@ const uploadImage = async (image) => {
 // Lấy tất cả thợ
 const getAllWorkers = async (req, res) => {
   try {
+    if (req.user.role === 'ktv') {
+      if (!req.user.worker) {
+        return res.status(200).json([]);
+      }
+
+      const worker = await Worker.findById(req.user.worker).populate('team', 'name');
+      return res.status(200).json(worker ? [worker] : []);
+    }
+
     const workers = await Worker.find();
     return res.status(200).json(workers);
   } catch (error) {
@@ -757,7 +770,9 @@ const resolveWorkerScope = (req, queryWorkerId) => {
 };
 
 const buildWorkerKpi = async (workerId, from, to) => {
-  const worker = await Worker.findById(workerId).select('name soBaoDanh avatar countRevenue');
+  const worker = await Worker.findById(workerId)
+    .select('name soBaoDanh avatar countRevenue team')
+    .populate('team', 'name');
   if (!worker) return null;
 
   const workerKey = workerId.toString();
@@ -792,15 +807,15 @@ const buildWorkerKpi = async (workerId, from, to) => {
   const completedCars = allCars.filter((car) => COMPLETED_STATUSES.includes(car.status));
 
   let revenueBeforeCommission = 0;
-  let revenueAfterCommission = 0;
 
   filteredItems.forEach((item) => {
     const rev = getRevenueForWorkerFromItem(item, workerId, countRevenueMap, item.car);
     if (rev) {
       revenueBeforeCommission += rev.grossRevenue;
-      revenueAfterCommission += rev.netRevenue;
     }
   });
+
+  const revenueBreakdown = applyDeductionsToGross(revenueBeforeCommission, await getRevenueDeductions());
 
   const allCarsInRange = await Car.find({
     currentDate: { $gte: from, $lte: to },
@@ -816,12 +831,16 @@ const buildWorkerKpi = async (workerId, from, to) => {
     name: worker.name,
     soBaoDanh: worker.soBaoDanh,
     avatar: worker.avatar,
+    teamId: worker.team?._id || null,
+    teamName: worker.team?.name || 'Chưa có tổ',
     from,
     to,
     carsDone: allCars.length,
     carsCompleted: completedCars.length,
     revenueBeforeCommission,
-    revenueAfterCommission,
+    revenueAfterCommission: revenueBreakdown.netRevenue,
+    deductionBreakdown: revenueBreakdown.deductions,
+    totalDeductionRate: revenueBreakdown.totalDeductionRate,
     carsOnTime: completedCars.filter((car) => !car.isLate).length,
     carsLate: allCars.filter((car) => car.isLate).length,
     performancePercentage,
@@ -855,10 +874,13 @@ const getWorkerKpi = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy thợ' });
     }
 
+    const deductions = await getRevenueDeductions();
+
     return res.status(200).json({
       success: true,
       period: period || 'custom',
       range,
+      deductions,
       data: kpi,
     });
   } catch (error) {
@@ -879,7 +901,7 @@ const getAllWorkersKpi = async (req, res) => {
     const { period, from, to } = req.query;
     const range = resolveDateRange(period, from, to);
 
-    const workers = await Worker.find().select('name soBaoDanh avatar countRevenue');
+    const workers = await Worker.find().select('name soBaoDanh avatar countRevenue team').populate('team', 'name');
     const data = await Promise.all(
       workers.map((worker) => buildWorkerKpi(worker._id, range.from, range.to))
     );
@@ -888,10 +910,13 @@ const getAllWorkersKpi = async (req, res) => {
       .filter(Boolean)
       .sort((a, b) => b.revenueAfterCommission - a.revenueAfterCommission);
 
+    const deductions = await getRevenueDeductions();
+
     return res.status(200).json({
       success: true,
       period: period || 'custom',
       range,
+      deductions,
       data: sorted,
     });
   } catch (error) {

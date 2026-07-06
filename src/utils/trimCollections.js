@@ -3,18 +3,20 @@ const Worker = require('../models/Worker');
 const Location = require('../models/Location');
 const Supervisor = require('../models/Supervisor');
 const Team = require('../models/Team');
-const Wokers = require('../models/Wokers');
 const RepairOrderItem = require('../models/RepairOrderItem');
 const OperationLog = require('../models/OperationLog');
+const KtvMessage = require('../models/KtvMessage');
+const KtvMessageSettings = require('../models/KtvMessageSettings');
 
 const DEFAULT_MAX_KEEP = 5000;
 
 const DEFAULTS = {
-  skip: ['Worker', 'Location', 'Supervisor', 'Team'],
+  skip: ['Worker', 'Location', 'Supervisor', 'Team', 'KtvMessageSettings'],
   carMax: 50_000,
-  wokersMax: 20_000,
   repairItemMax: 200_000,
   operationLogDays: 90,
+  ktvMessageDays: 90,
+  ktvMessageMax: 10_000,
   deliveredCarMonths: 12,
 };
 
@@ -50,10 +52,6 @@ const buildTrimConfig = (overrides = {}) => {
       process.env.TRIM_CAR_MAX,
       legacyMax > DEFAULT_MAX_KEEP ? legacyMax : DEFAULTS.carMax,
     ),
-    wokersMax: overrides.wokersMax ?? parsePositiveInt(
-      process.env.TRIM_WOKERS_MAX,
-      DEFAULTS.wokersMax,
-    ),
     repairItemMax: overrides.repairItemMax ?? parsePositiveInt(
       process.env.TRIM_REPAIR_ITEM_MAX,
       DEFAULTS.repairItemMax,
@@ -61,6 +59,14 @@ const buildTrimConfig = (overrides = {}) => {
     operationLogDays: overrides.operationLogDays ?? parsePositiveInt(
       process.env.TRIM_OPERATION_LOG_DAYS,
       DEFAULTS.operationLogDays,
+    ),
+    ktvMessageDays: overrides.ktvMessageDays ?? parsePositiveInt(
+      process.env.TRIM_KTV_MESSAGE_DAYS,
+      DEFAULTS.ktvMessageDays,
+    ),
+    ktvMessageMax: overrides.ktvMessageMax ?? parsePositiveInt(
+      process.env.TRIM_KTV_MESSAGE_MAX,
+      DEFAULTS.ktvMessageMax,
     ),
     deliveredCarMonths: overrides.deliveredCarMonths ?? parsePositiveInt(
       process.env.TRIM_DELIVERED_CAR_MONTHS,
@@ -302,6 +308,27 @@ const logMasterData = async (name, model) => {
   };
 };
 
+const trimKtvMessages = async ({ days, maxKeep, dryRun = true }) => {
+  const total = await KtvMessage.countDocuments();
+  const ageResult = await trimByAge(KtvMessage, days, dryRun);
+  const countResult = await trimByCount(KtvMessage, maxKeep, dryRun);
+  const deleted = ageResult.deleted + countResult.deleted;
+
+  return {
+    total,
+    deleted,
+    kept: Math.max(0, total - deleted),
+    skipped: deleted === 0,
+    policy: `age>${days}d + max=${maxKeep}`,
+    cutoffAt: ageResult.cutoffAt,
+    details: {
+      deletedByAge: ageResult.deleted,
+      deletedByCount: countResult.deleted,
+      countCutoffAt: countResult.cutoffAt,
+    },
+  };
+};
+
 const trimAllCollections = async ({
   maxKeep = DEFAULT_MAX_KEEP,
   dryRun = true,
@@ -320,15 +347,32 @@ const trimAllCollections = async ({
   results.push(await trimRepairOrderItems(config.repairItemMax, dryRun));
   results[results.length - 1].collection = 'RepairOrderItem';
 
-  results.push(await trimByCount(Wokers, config.wokersMax, dryRun));
-  results[results.length - 1].collection = 'Wokers';
-  results[results.length - 1].policy = `max=${config.wokersMax}`;
-
   const logResult = await trimByAge(OperationLog, config.operationLogDays, dryRun);
   results.push({
     collection: 'OperationLog',
     ...logResult,
   });
+
+  const ktvMessageResult = await trimKtvMessages({
+    days: config.ktvMessageDays,
+    maxKeep: config.ktvMessageMax,
+    dryRun,
+  });
+  results.push({
+    collection: 'KtvMessage',
+    ...ktvMessageResult,
+  });
+
+  if (config.skip.includes('KtvMessageSettings')) {
+    results.push(await logMasterData('KtvMessageSettings', KtvMessageSettings));
+  } else {
+    const settingsResult = await trimByCount(KtvMessageSettings, 1, dryRun);
+    results.push({
+      collection: 'KtvMessageSettings',
+      ...settingsResult,
+      policy: 'singleton',
+    });
+  }
 
   const masterModels = [
     { name: 'Worker', model: Worker },
@@ -355,9 +399,10 @@ const trimAllCollections = async ({
 const getTrimSummary = (config = buildTrimConfig()) => ({
   skip: config.skip,
   carMax: config.carMax,
-  wokersMax: config.wokersMax,
   repairItemMax: config.repairItemMax,
   operationLogDays: config.operationLogDays,
+  ktvMessageDays: config.ktvMessageDays,
+  ktvMessageMax: config.ktvMessageMax,
   deliveredCarMonths: config.deliveredCarMonths,
 });
 

@@ -2,7 +2,7 @@
  * Xóa TOÀN BỘ xe, chi tiết sửa chữa (RepairOrderItem) và doanh thu liên quan.
  * Sau khi xóa: chuyển tất cả thợ về trạng thái rảnh (available).
  *
- * KHÔNG xóa: Worker, User, Supervisor, Location, Team, Wokers (chỉ reset trạng thái).
+ * KHÔNG xóa: Worker, User, Supervisor, Location, Team.
  *
  * Usage:
  *   node scripts/clearAllCarsAndRepairData.js              # dry-run (mặc định)
@@ -15,7 +15,6 @@ const mongoose = require('mongoose');
 const Car = require('../src/models/Car');
 const Worker = require('../src/models/Worker');
 const RepairOrderItem = require('../src/models/RepairOrderItem');
-const Wokers = require('../src/models/Wokers');
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/phancong';
 const APPLY = process.argv.includes('--apply');
@@ -76,9 +75,7 @@ async function collectStats() {
     totalAmount: 0,
   };
 
-  const wokersWithCar = await Wokers.countDocuments({ car: { $ne: null } });
   const busyWorkers = await Worker.countDocuments({ status: 'busy' });
-  const wokersBusy = await Wokers.countDocuments({ status: 'co_viec' });
   const workersWithActiveManualJobs = await Worker.countDocuments({
     'manualJobs.status': 'co_viec',
   });
@@ -100,9 +97,7 @@ async function collectStats() {
     itemCount,
     itemsWithRevenue,
     revenue,
-    wokersWithCar,
     busyWorkers,
-    wokersBusy,
     workersWithActiveManualJobs,
     sampleCars,
     sampleItems,
@@ -123,9 +118,7 @@ async function main() {
   console.log(`Tổng thành tiền hạng mục:    ${formatMoney(stats.revenue.totalAmount)} đ`);
   console.log(`Tổng DT trước hoa hồng:      ${formatMoney(stats.revenue.totalGross)} đ`);
   console.log(`Tổng DT sau trừ 25%:         ${formatMoney(stats.revenue.totalNet)} đ`);
-  console.log(`Wokers còn gắn car:          ${stats.wokersWithCar} (sẽ gỡ ref)`);
   console.log(`Thợ đang bận (Worker.busy):   ${stats.busyWorkers} → available`);
-  console.log(`Wokers đang có việc:        ${stats.wokersBusy} → chua_co_viec`);
   console.log(`Thợ có việc ghi tay:        ${stats.workersWithActiveManualJobs} → chua_co_viec`);
 
   if (stats.carCount === 0 && stats.itemCount === 0) {
@@ -164,10 +157,6 @@ async function main() {
 
   const repairResult = await RepairOrderItem.deleteMany({});
   const carResult = await Car.deleteMany({});
-  const wokersResult = await Wokers.updateMany(
-    {},
-    { $set: { status: 'chua_co_viec' }, $unset: { car: '' } }
-  );
   const workerStatusResult = await Worker.updateMany({}, { $set: { status: 'available' } });
 
   const workersWithManualJobs = await Worker.find({ 'manualJobs.status': 'co_viec' });
@@ -183,10 +172,19 @@ async function main() {
     await worker.save();
   }
 
+  const db = mongoose.connection.db;
+  const legacyWokers = db.collection('wokers');
+  const legacyCount = await legacyWokers.countDocuments().catch(() => 0);
+  if (legacyCount > 0) {
+    await legacyWokers.deleteMany({});
+  }
+
   console.log('\n=== KẾT QUẢ ===');
   console.log(`Đã xóa RepairOrderItem:     ${repairResult.deletedCount}`);
   console.log(`Đã xóa Car:                 ${carResult.deletedCount}`);
-  console.log(`Đã reset Wokers:            ${wokersResult.modifiedCount}`);
+  if (legacyCount > 0) {
+    console.log(`Đã xóa collection wokers:   ${legacyCount} (legacy)`);
+  }
   console.log(`Thợ → available:            ${workerStatusResult.modifiedCount}`);
   console.log(`Việc ghi tay → chua_co_viec: ${manualJobCount}`);
 

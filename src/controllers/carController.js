@@ -3,7 +3,6 @@ const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
 const RepairOrderItem = require('../models/RepairOrderItem');
 const Location = require('../models/Location');
-const Wokers = require('../models/Wokers');
 const { fetchRepairDetailsForCar } = require('./externalController');
 const moment = require('moment-timezone');
 const {
@@ -23,6 +22,19 @@ const {
   updateWorkerStatusDefault,
   populateCarWorkers,
 } = require('../utils/workerStatus');
+const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
+const OperationLog = require('../models/OperationLog');
+const { createKtvMessage } = require('../utils/ktvMessageSettings');
+
+const CAR_STATUS_LABELS = {
+  pending: 'Chờ sửa',
+  working: 'Đang sửa',
+  done: 'Sửa xong',
+  waiting_wash: 'Chờ rửa',
+  waiting_handover: 'Chờ giao',
+  additional_repair: 'Sửa bổ sung',
+  delivered: 'Đã giao',
+};
 
 const CAR_LIST_SELECT = '-workerLogs -statusHistory';
 const CAR_LIST_POPULATE = [
@@ -73,6 +85,11 @@ const getAllCars = async (req, res) => {
       filter.location = req.query.location;
     }
 
+    const ktvWorkerId = getKtvWorkerId(req.user);
+    if (ktvWorkerId && req.query.mine === '1') {
+      filter['workers.worker'] = ktvWorkerId;
+    }
+
     const cars = await findCarsForList(filter);
 
     res.json(cars);
@@ -92,6 +109,13 @@ const getCarById = async (req, res) => {
 
     if (!car) {
       return res.status(404).json({ message: 'Không tìm thấy xe' });
+    }
+
+    if (getKtvWorkerId(req.user) && req.query.mine === '1') {
+      const ownsCar = await assertKtvOwnsCar(req.user, req.params.id);
+      if (!ownsCar) {
+        return res.status(403).json({ message: 'Bạn chỉ xem được xe được gán cho mình' });
+      }
     }
 
     res.json(car);
@@ -251,10 +275,6 @@ const createCar = async (req, res) => {
 
     // ✅ Sau khi thêm xe có thợ: chỉ đánh bận khi xe không ở trạng thái chờ sửa
     if (data.workers.length > 0) {
-      const vieclamChiTiet = repairItems.length > 0
-        ? repairItems.map((item) => item.content).filter(Boolean).join('; ')
-        : '';
-
       const shouldMarkWorkersBusy = car.status && car.status !== 'pending';
 
       if (shouldMarkWorkersBusy) {
@@ -262,15 +282,6 @@ const createCar = async (req, res) => {
           await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
         }
       }
-
-      await Wokers.insertMany(
-        data.workers.map((w) => ({
-          worker: w.worker,
-          car: car._id,
-          vieclamChiTiet,
-          status: shouldMarkWorkersBusy ? 'co_viec' : 'chua_co_viec',
-        }))
-      );
     }
 
     return res.status(201).json(car);
@@ -323,12 +334,6 @@ const updateCar = async (req, res) => {
 
         // ✅ Đặt trạng thái thợ thành 'available'
         await Worker.findByIdAndUpdate(wid, { status: 'available' });
-
-        // ✅ Đóng công việc của thợ với xe này
-        await Wokers.updateMany(
-          { worker: wid, car: car._id, status: 'co_viec' },
-          { status: 'chua_co_viec' }
-        );
       }
 
       for (const wid of added) {
@@ -341,13 +346,6 @@ const updateCar = async (req, res) => {
 
         // ✅ Đặt trạng thái thợ thành 'busy'
         await Worker.findByIdAndUpdate(wid, { status: 'busy' });
-
-        // ✅ Mở công việc mới cho thợ với xe này
-        await Wokers.create({
-          worker: wid,
-          car: car._id,
-          status: 'co_viec',
-        });
       }
 
       // Gán lại để tránh bị mất
@@ -683,12 +681,6 @@ const updateCarStatus = async (req, res) => {
       car.status = status;
       await car.save();
 
-      // ✅ Đóng toàn bộ công việc của các thợ với xe này vì xe đã giao xong
-      await Wokers.updateMany(
-        { car: car._id, status: 'co_viec' },
-        { status: 'chua_co_viec' }
-      );
-
       return res.status(200).json({
         message: 'Xe đã được giao thành công',
         car: await populateCarWorkers(id)
@@ -755,7 +747,6 @@ const deleteCar = async (req, res) => {
     req.auditDeleted = { label: car.plateNumber };
 
     await RepairOrderItem.deleteMany({ car: car._id });
-    await Wokers.deleteMany({ car: car._id });
 
     for (const w of car.workers) {
       const workerId = w.worker;
@@ -1267,6 +1258,14 @@ const getRepairHistory = async (req, res) => {
 const getCarRepairItems = async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (getKtvWorkerId(req.user)) {
+      const ownsCar = await assertKtvOwnsCar(req.user, id);
+      if (!ownsCar) {
+        return res.status(403).json({ message: 'Bạn chỉ xem được xe được gán cho mình' });
+      }
+    }
+
     const car = await Car.findById(id);
 
     if (!car) {
@@ -1662,6 +1661,66 @@ const saveManualRepairItems = async (req, res) => {
   }
 };
 
+const notifyAdminAboutCar = async (req, res) => {
+  const { id } = req.params;
+  const note = String(req.body?.message || '').trim();
+
+  if (req.user?.role !== 'ktv') {
+    return res.status(403).json({ message: 'Chỉ KTV mới được gửi thông báo cho admin' });
+  }
+
+  const ownsCar = await assertKtvOwnsCar(req.user, id);
+  if (!ownsCar) {
+    return res.status(403).json({ message: 'Bạn không được gán cho xe này' });
+  }
+
+  const car = await Car.findById(id)
+    .populate('location', 'name')
+    .populate('supervisor', 'name')
+    .lean();
+
+  if (!car) {
+    return res.status(404).json({ message: 'Xe không tìm thấy' });
+  }
+
+  const statusLabel = CAR_STATUS_LABELS[car.status] || car.status;
+  const description = note
+    ? `KTV báo admin về xe ${car.plateNumber} (${statusLabel}): ${note}`
+    : `KTV báo admin về xe ${car.plateNumber} — trạng thái hiện tại: ${statusLabel}`;
+
+  const log = await OperationLog.create({
+    user: req.user._id,
+    username: req.user.username || '',
+    fullName: req.user.fullName || '',
+    role: req.user.role || '',
+    action: 'ktv_notify',
+    module: 'car',
+    targetId: String(car._id),
+    targetLabel: car.plateNumber,
+    description,
+    metadata: {
+      carStatus: car.status,
+      carStatusLabel: statusLabel,
+      message: note,
+      location: car.location?.name || '',
+      supervisor: car.supervisor?.name || '',
+    },
+  });
+
+  const ktvMessage = await createKtvMessage({
+    sender: req.user,
+    car,
+    note,
+    operationLogId: log._id,
+  });
+
+  return res.status(201).json({
+    message: 'Đã gửi thông báo cho admin',
+    log,
+    ktvMessage,
+  });
+};
+
 module.exports = {
   getAllCars,
   getCarById,
@@ -1679,4 +1738,5 @@ module.exports = {
   assignRepairItemWorkers,
   saveManualRepairItems,
   getRepairHistory,
+  notifyAdminAboutCar,
 };

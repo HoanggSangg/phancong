@@ -11,12 +11,13 @@ const PERMISSION_CATALOG = [
   { key: 'cars.delete', defaultRoles: ['admin'] },
   { key: 'cars.voice', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'workers.main', defaultRoles: ['admin', 'giam_sat'] },
-  { key: 'workers.available', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
   { key: 'workers.woker', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
-  { key: 'workers.repair-history', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
-  { key: 'workers.kpi', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
+  { key: 'workers.available', defaultRoles: ['admin', 'giam_sat'] },
+  { key: 'workers.repair-history', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'teams.manage', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'reports.revenue', defaultRoles: ['admin', 'giam_sat'] },
+  { key: 'reports.dashboard', defaultRoles: ['admin'] },
+  { key: 'reports.dashboard', defaultRoles: ['admin'] },
   { key: 'reports.praise', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'reports.warning', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'system.locations', defaultRoles: ['admin'] },
@@ -24,6 +25,7 @@ const PERMISSION_CATALOG = [
   { key: 'system.users', defaultRoles: ['admin'] },
   { key: 'system.permissions', defaultRoles: ['admin'] },
   { key: 'system.audit-logs', defaultRoles: ['admin'] },
+  { key: 'system.ktv-messages', defaultRoles: ['admin', 'giam_sat'] },
 ];
 
 const PERMISSION_KEYS = PERMISSION_CATALOG.map((item) => item.key);

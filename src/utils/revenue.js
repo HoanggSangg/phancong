@@ -1,4 +1,5 @@
 const moment = require('moment-timezone');
+const { applyDeductionsToGross, getCachedDeductions } = require('./revenueDeductions');
 
 const COMMISSION_RATE = 0.75;
 const TIMEZONE = 'Asia/Ho_Chi_Minh';
@@ -65,9 +66,10 @@ const calculateRevenueShare = (amount, percentage, countRevenue = true) => {
   if (!countRevenue) {
     return { grossRevenue: 0, netRevenue: 0 };
   }
+  const { netRevenue } = applyDeductionsToGross(gross, getCachedDeductions());
   return {
     grossRevenue: gross,
-    netRevenue: Math.round(gross * COMMISSION_RATE),
+    netRevenue,
   };
 };
 
@@ -134,7 +136,13 @@ const getStoredRevenuesForWorker = (item, workerId) => {
 
 const getRevenueForWorkerFromItem = (item, workerId, countRevenueMap = new Map(), car = null) => {
   const stored = getStoredRevenuesForWorker(item, workerId);
-  if (stored) return stored;
+  if (stored) {
+    const { netRevenue } = applyDeductionsToGross(stored.grossRevenue, getCachedDeductions());
+    return {
+      ...stored,
+      netRevenue,
+    };
+  }
 
   const assignment = getItemWorkerAssignments(item, car).find(
     (row) => String(row.workerId) === String(workerId)
