@@ -463,7 +463,8 @@ const buildDetailedDescription = async ({
     }
 
     case 'car:update_status': {
-      const plate = await resolveCarPlate(params.id, entity?.car || entity, body);
+      const carEntity = entity?.car || entity;
+      const plate = await resolveCarPlate(params.id, carEntity, body);
       const statusLabel = formatStatus(body.status);
       description = responseMessage
         ? `Xe ${plate}: ${responseMessage}`
@@ -476,6 +477,12 @@ const buildDetailedDescription = async ({
         const workerName = await resolveWorkerName(body.newWorkerId);
         if (workerName) details.push(`Gán thợ: ${workerName}`);
       }
+      const locationName = carEntity?.location?.name
+        || await resolveLocationName(carEntity?.location, carEntity?.location, body);
+      const supervisorName = carEntity?.supervisor?.name
+        || await resolveSupervisorName(carEntity?.supervisor, carEntity?.supervisor, body);
+      if (locationName) details.push(`Địa điểm: ${locationName}`);
+      if (supervisorName) details.push(`Giám sát: ${supervisorName}`);
       break;
     }
 

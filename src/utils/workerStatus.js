@@ -75,7 +75,13 @@ const releaseWorkers = async (workerIds, excludeCarId, mode) => {
 };
 
 const populateCarWorkers = async (carId) =>
-  Car.findById(carId).populate('workers.worker');
+  Car.findById(carId)
+    .select('-workerLogs -statusHistory')
+    .populate([
+      { path: 'workers.worker', select: 'name' },
+      { path: 'supervisor', select: 'name' },
+      { path: 'location', select: 'name' },
+    ]);
 
 module.exports = {
   getOtherCarsForWorker,
