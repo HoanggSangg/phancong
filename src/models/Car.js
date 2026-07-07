@@ -2,18 +2,31 @@
 const moment = require('moment-timezone');
 const { Schema } = mongoose;
 
+const normalizeROKey = (roNumber = '', roCode = '') => {
+  const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
+  const code = String(roCode || '').trim().toUpperCase().replace(/\s/g, '');
+  return number || code || '';
+};
+
 const carSchema = new Schema({
   plateNumber: {
     type: String,
     required: [true, 'Biển số xe là bắt buộc'],
   },
+
   roCode: { type: String, default: '' },
   roNumber: { type: String, default: '' },
+
+  // ✅ Dùng để check trùng RO nhanh bằng index
+  roKey: {
+    type: String,
+    default: '',
+    index: true,
+  },
 
   externalCarTypeName: { type: String, default: '' },
   advisorName: { type: String, default: '' },
 
-  // ✅ Thợ chính / thợ phụ
   workers: [
     {
       worker: {
@@ -29,7 +42,6 @@ const carSchema = new Schema({
     },
   ],
 
-  // ✅ Lịch sử thay đổi thợ
   workerLogs: [
     {
       worker: { type: Schema.Types.ObjectId, ref: 'Worker' },
@@ -39,13 +51,11 @@ const carSchema = new Schema({
     },
   ],
 
-  // ✅ Giám sát
   supervisor: {
     type: Schema.Types.ObjectId,
     ref: 'Supervisor',
   },
 
-  // ✅ Địa điểm
   location: {
     type: Schema.Types.ObjectId,
     ref: 'Location',
@@ -78,15 +88,14 @@ const carSchema = new Schema({
     default: null,
   },
 
-  deliveryTime: { type: String }, // DD-MM-YYYY HH[h]
+  deliveryTime: { type: String },
 
   isLate: { type: Boolean, default: false },
 
-  currentDate: { type: String }, // YYYY-MM-DD
-  currentTime: { type: String }, // HH:mm:ss
+  currentDate: { type: String },
+  currentTime: { type: String },
 }, { timestamps: true });
 
-// ✅ Virtual populate: chi tiết lệnh sửa chữa (collection riêng RepairOrderItem)
 carSchema.virtual('repairItems', {
   ref: 'RepairOrderItem',
   localField: '_id',
@@ -97,6 +106,8 @@ carSchema.set('toObject', { virtuals: true });
 carSchema.set('toJSON', { virtuals: true });
 
 carSchema.pre('save', function (next) {
+  this.roKey = normalizeROKey(this.roNumber, this.roCode);
+
   if (this.isModified('status')) {
     this.statusHistory.push({ status: this.status, timestamp: new Date() });
   }
@@ -116,13 +127,13 @@ carSchema.pre('save', function (next) {
 
 carSchema.statics.getStatusLabel = function (status) {
   const statusLabels = {
-    'pending': 'Chờ hàng',
-    'working': 'Đang sửa',
-    'done': 'Sửa xong',
-    'waiting_wash': 'Chờ rửa xe',
-    'waiting_handover': 'Chờ bàn giao',
-    'delivered': 'Đã giao',
-    'additional_repair': 'Sửa phát sinh'
+    pending: 'Chờ hàng',
+    working: 'Đang sửa',
+    done: 'Sửa xong',
+    waiting_wash: 'Chờ rửa xe',
+    waiting_handover: 'Chờ bàn giao',
+    delivered: 'Đã giao',
+    additional_repair: 'Sửa phát sinh',
   };
   return statusLabels[status] || status;
 };
@@ -131,6 +142,7 @@ carSchema.methods.getCurrentStatusLabel = function () {
   return this.constructor.getStatusLabel(this.status);
 };
 
+carSchema.index({ roKey: 1 }, { unique: true, sparse: true });
 carSchema.index({ currentDate: 1, status: 1 });
 carSchema.index({ status: 1 });
 carSchema.index({ plateNumber: 1, currentDate: 1 });

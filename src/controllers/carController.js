@@ -140,7 +140,6 @@ const createCar = async (req, res) => {
     data.currentTime = now.format('HH:mm:ss');
     data.currentDate = now.format('YYYY-MM-DD');
 
-    // ✅ Loại xe luôn lấy từ dữ liệu API (externalCarTypeName)
     const externalCarTypeName = String(data.externalCarTypeName || '').trim();
 
     if (!externalCarTypeName) {
@@ -150,31 +149,27 @@ const createCar = async (req, res) => {
     data.externalCarTypeName = externalCarTypeName;
     delete data.carType;
 
-    // Cùng biển số trong ngày chỉ chặn khi trùng RO
-    const carsToday = await Car.find({
-      plateNumber: data.plateNumber,
-      currentDate: data.currentDate,
-    }).select('roNumber roCode plateNumber');
-
     const incomingRO = normalizeROKey(data.roNumber, data.roCode);
 
-    if (incomingRO) {
-      const duplicateRO = carsToday.find(
-        (car) => normalizeROKey(car.roNumber, car.roCode) === incomingRO
-      );
-
-      if (duplicateRO) {
-        return res.status(400).json({
-          message: `Xe ${data.plateNumber} với RO ${incomingRO} đã được tạo trong ngày hôm nay`,
-        });
-      }
-    } else if (carsToday.length > 0) {
+    if (!incomingRO) {
       return res.status(400).json({
-        message: `Xe ${data.plateNumber} đã có trong ngày hôm nay. Vui lòng tra cứu và nhập số RO để thêm lệnh mới.`,
+        message: 'Thiếu số RO. Vui lòng tra cứu RO trước khi thêm xe.',
       });
     }
 
-    // ✅ Địa điểm không bắt buộc, chỉ kiểm tra nếu có gửi lên
+    data.roKey = incomingRO;
+
+    // ✅ Check trùng RO nhanh bằng index, không duyệt toàn bộ DB
+    const duplicateRO = await Car.findOne({ roKey: incomingRO })
+      .select('_id plateNumber roNumber roCode currentDate')
+      .lean();
+
+    if (duplicateRO) {
+      return res.status(400).json({
+        message: `RO ${incomingRO} đã tồn tại ở xe ${duplicateRO.plateNumber}. Không thể thêm trùng RO.`,
+      });
+    }
+
     if (data.location) {
       const locationExists = await Location.exists({ _id: data.location });
       if (!locationExists) {
@@ -182,7 +177,6 @@ const createCar = async (req, res) => {
       }
     }
 
-    // ✅ Kiểm tra và chuẩn hóa deliveryTime
     if (data.deliveryTime) {
       const original = data.deliveryTime.trim();
       const normalized = original.replace(/\[?h\]?/, '').trim();
@@ -194,24 +188,21 @@ const createCar = async (req, res) => {
         });
       }
 
-      // Lưu chuẩn format có [h]
-      data.deliveryTime = moment(normalized, 'DD-MM-YYYY HH').format('DD-MM-YYYY HH') + '[h]';
+      data.deliveryTime =
+        moment(normalized, 'DD-MM-YYYY HH').format('DD-MM-YYYY HH') + '[h]';
     }
 
-    // ✅ Kiểm tra tình trạng xe (condition)
     const allowedConditions = ['vip', 'good', 'normal', 'warranty', 'rescue'];
     if (data.condition && !allowedConditions.includes(data.condition)) {
       return res.status(400).json({
-        message: 'Tình trạng xe không hợp lệ (chỉ nhận: vip, good, normal, warranty, rescue)',
+        message: 'Tình trạng xe không hợp lệ',
       });
     }
 
-    // ✅ Nếu không có condition, để null (bình thường)
     if (!data.condition || data.condition === '') {
       data.condition = null;
     }
 
-    // ✅ Kiểm tra thợ có đang bận không
     const workerIds = data.workers.map((w) => w.worker).filter(Boolean);
     const busyErrors = [];
 
@@ -227,8 +218,13 @@ const createCar = async (req, res) => {
         );
 
         if (existingCar) {
-          const worker = existingCar.workers.find((x) => x.worker._id.equals(w.worker));
-          busyErrors.push(`Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`);
+          const worker = existingCar.workers.find((x) =>
+            x.worker._id.equals(w.worker)
+          );
+
+          busyErrors.push(
+            `Thợ "${worker?.worker?.name}" đang bận làm xe biển số ${existingCar.plateNumber}`
+          );
         }
       }
     }
@@ -240,15 +236,10 @@ const createCar = async (req, res) => {
       });
     }
 
-    // ✅ Lưu xe
     const car = new Car(data);
     await car.save();
 
     if (repairItems.length > 0) {
-      await RepairOrderItem.deleteMany({
-        car: car._id,
-      });
-
       await RepairOrderItem.insertMany(
         repairItems.map((item) => ({
           car: car._id,
@@ -273,7 +264,6 @@ const createCar = async (req, res) => {
       );
     }
 
-    // ✅ Sau khi thêm xe có thợ: chỉ đánh bận khi xe không ở trạng thái chờ sửa
     if (data.workers.length > 0) {
       const shouldMarkWorkersBusy = car.status && car.status !== 'pending';
 
@@ -286,6 +276,12 @@ const createCar = async (req, res) => {
 
     return res.status(201).json(car);
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.roKey) {
+      return res.status(400).json({
+        message: 'RO này đã tồn tại. Không thể thêm xe trùng RO.',
+      });
+    }
+
     console.error('Lỗi tạo xe:', error);
     return res.status(400).json({ message: error.message });
   }
@@ -1120,7 +1116,7 @@ const getRepairHistory = async (req, res) => {
     let items = await RepairOrderItem.find(itemQuery)
       .populate({
         path: 'car',
-        select: 'plateNumber externalCarTypeName currentDate status isLate workers workerLogs',
+        select: 'plateNumber roNumber externalCarTypeName currentDate status isLate workers workerLogs',
         populate: { path: 'workers.worker', select: 'name soBaoDanh' },
       })
       .populate('workerAssignments.worker', 'name soBaoDanh')
@@ -1169,13 +1165,14 @@ const getRepairHistory = async (req, res) => {
 
       const visibleAssignments = workerFilter
         ? mappedAssignments.filter(
-            (assignment) => String(assignment.workerId) === workerFilter
-          )
+          (assignment) => String(assignment.workerId) === workerFilter
+        )
         : mappedAssignments;
 
       return {
         _id: item._id,
         plateNumber: item.plateNumber || item.car?.plateNumber || '',
+        roNumber: item.roNumber || item.car?.roNumber || '',
         carType: item.car?.externalCarTypeName || '',
         carDate: item.car?.currentDate || '',
         carStatus: item.car?.status || '',
