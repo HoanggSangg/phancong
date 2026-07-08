@@ -37,6 +37,12 @@ const invalidateKtvMessageSettingsCache = () => {
   cachedSettings = null;
 };
 
+const normalizeROKey = (roNumber = '', roCode = '') => {
+  const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
+  const code = String(roCode || '').trim().toUpperCase().replace(/\s/g, '');
+  return number || code || '';
+};
+
 const createKtvMessage = async ({
   sender,
   car,
@@ -45,12 +51,17 @@ const createKtvMessage = async ({
 }) => {
   const settings = await getKtvMessageSettings();
   const statusLabel = CAR_STATUS_LABELS[car.status] || car.status;
+  const roCode = car.roCode || '';
+  const roNumber = car.roNumber || '';
 
   return KtvMessage.create({
     sender: sender._id,
     senderName: sender.fullName || sender.username || '',
     car: car._id,
     plateNumber: car.plateNumber,
+    roCode,
+    roNumber,
+    roKey: normalizeROKey(roNumber, roCode),
     carStatus: car.status,
     carStatusLabel: statusLabel,
     message: note,

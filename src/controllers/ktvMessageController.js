@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Car = require('../models/Car');
 const KtvMessage = require('../models/KtvMessage');
 const {
   getKtvMessageSettings,
@@ -8,6 +9,12 @@ const {
   buildMessageFilterForUser,
 } = require('../utils/ktvMessageSettings');
 
+const normalizeROKey = (roNumber = '', roCode = '') => {
+  const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
+  const code = String(roCode || '').trim().toUpperCase().replace(/\s/g, '');
+  return number || code || '';
+};
+
 const getEligibleReceiverUsers = async () => User.find({
   role: { $in: ['admin', 'giam_sat'] },
   isActive: true,
@@ -15,6 +22,74 @@ const getEligibleReceiverUsers = async () => User.find({
   .select('fullName username role')
   .sort({ fullName: 1 })
   .lean();
+
+const createMessage = async (req, res) => {
+  try {
+    if (req.user?.role !== 'ktv') {
+      return res.status(403).json({ message: 'Chỉ KTV mới được gửi tin nhắn' });
+    }
+
+    const {
+      carId,
+      message = '',
+      plateNumber = '',
+      roCode = '',
+      roNumber = '',
+      carStatus = '',
+      carStatusLabel = '',
+      locationName = '',
+      supervisorName = '',
+    } = req.body || {};
+
+    if (!carId || !mongoose.Types.ObjectId.isValid(carId)) {
+      return res.status(400).json({ message: 'Thiếu hoặc sai carId' });
+    }
+
+    const car = await Car.findById(carId).lean();
+
+    if (!car) {
+      return res.status(404).json({ message: 'Không tìm thấy xe để gửi tin nhắn' });
+    }
+
+    const settings = await getKtvMessageSettings();
+
+    const receiverUserIds = (settings.receiverUserIds || [])
+      .filter((id) => mongoose.Types.ObjectId.isValid(String(id)))
+      .map((id) => new mongoose.Types.ObjectId(String(id)));
+
+    const finalRoCode = car.roCode || roCode || '';
+    const finalRoNumber = car.roNumber || roNumber || '';
+
+    const item = await KtvMessage.create({
+      sender: req.user._id,
+      senderName: req.user.fullName || req.user.username || '',
+
+      car: car._id,
+      plateNumber: car.plateNumber || plateNumber || '',
+
+      roCode: finalRoCode,
+      roNumber: finalRoNumber,
+      roKey: normalizeROKey(finalRoNumber, finalRoCode),
+
+      carStatus: car.status || carStatus || '',
+      carStatusLabel: carStatusLabel || '',
+
+      message: String(message || '').trim(),
+
+      locationName: car.locationName || locationName || '',
+      supervisorName: car.supervisorName || supervisorName || '',
+
+      receiverUserIds,
+    });
+
+    return res.status(201).json({
+      message: 'Đã gửi tin nhắn cho admin',
+      item,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
 
 const getSettings = async (req, res) => {
   try {
@@ -97,6 +172,7 @@ const listMessages = async (req, res) => {
 const markMessageRead = async (req, res) => {
   try {
     const message = await KtvMessage.findById(req.params.id);
+
     if (!message) {
       return res.status(404).json({ message: 'Không tìm thấy tin nhắn' });
     }
@@ -184,6 +260,7 @@ const acknowledgeReadNotice = async (req, res) => {
 };
 
 module.exports = {
+  createMessage,
   getSettings,
   updateSettings,
   listMessages,
