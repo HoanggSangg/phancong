@@ -25,6 +25,11 @@ const {
 const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
 const OperationLog = require('../models/OperationLog');
 const { createKtvMessage } = require('../utils/ktvMessageSettings');
+const {
+  normalizeROFields,
+  buildDuplicateROFilter,
+  getROLookupTokens,
+} = require('../utils/roKey');
 
 const CAR_STATUS_LABELS = {
   pending: 'Chờ sửa',
@@ -48,12 +53,6 @@ const findCarsForList = (filter = {}) =>
     .select(CAR_LIST_SELECT)
     .populate(CAR_LIST_POPULATE)
     .lean();
-
-const normalizeROKey = (roNumber = '', roCode = '') => {
-  const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
-  const code = String(roCode || '').trim().toUpperCase().replace(/\s/g, '');
-  return number || code || '';
-};
 
 const mapExternalItemToRepairOrder = (item, car) => ({
   car: car._id,
@@ -149,24 +148,34 @@ const createCar = async (req, res) => {
     data.externalCarTypeName = externalCarTypeName;
     delete data.carType;
 
-    const incomingRO = normalizeROKey(data.roNumber, data.roCode);
+    const normalizedRO = normalizeROFields({
+      roNumber: data.roNumber,
+      roCode: data.roCode,
+    });
 
-    if (!incomingRO) {
+    if (!normalizedRO.roKey) {
       return res.status(400).json({
         message: 'Thiếu số RO. Vui lòng tra cứu RO trước khi thêm xe.',
       });
     }
 
-    data.roKey = incomingRO;
+    data.roNumber = normalizedRO.roNumber;
+    data.roCode = normalizedRO.roCode;
+    data.roKey = normalizedRO.roKey;
 
-    // ✅ Check trùng RO nhanh bằng index, không duyệt toàn bộ DB
-    const duplicateRO = await Car.findOne({ roKey: incomingRO })
-      .select('_id plateNumber roNumber roCode currentDate')
-      .lean();
+    const duplicateFilter = buildDuplicateROFilter(data.roNumber, data.roCode);
+    const duplicateRO = duplicateFilter
+      ? await Car.findOne(duplicateFilter)
+        .select('_id plateNumber roNumber roCode currentDate')
+        .lean()
+      : null;
 
     if (duplicateRO) {
+      const roLabel = getROLookupTokens(data.roNumber, data.roCode).join(' / ')
+        || normalizedRO.roKey;
+
       return res.status(400).json({
-        message: `RO ${incomingRO} đã tồn tại ở xe ${duplicateRO.plateNumber}. Không thể thêm trùng RO.`,
+        message: `RO ${roLabel} đã tồn tại ở xe ${duplicateRO.plateNumber}. Không thể thêm trùng RO.`,
       });
     }
 
@@ -352,6 +361,39 @@ const updateCar = async (req, res) => {
     // Không cho cập nhật loại xe qua CateCar nữa
     delete req.body.carType;
 
+    if (req.body.roNumber !== undefined || req.body.roCode !== undefined) {
+      const normalizedRO = normalizeROFields({
+        roNumber: req.body.roNumber ?? car.roNumber,
+        roCode: req.body.roCode ?? car.roCode,
+      });
+
+      if (!normalizedRO.roKey) {
+        return res.status(400).json({ message: 'RO không hợp lệ' });
+      }
+
+      const duplicateFilter = buildDuplicateROFilter(
+        normalizedRO.roNumber,
+        normalizedRO.roCode,
+        car._id,
+      );
+
+      if (duplicateFilter) {
+        const duplicateRO = await Car.findOne(duplicateFilter)
+          .select('_id plateNumber roNumber roCode')
+          .lean();
+
+        if (duplicateRO) {
+          return res.status(400).json({
+            message: `RO đã tồn tại ở xe ${duplicateRO.plateNumber}. Không thể dùng trùng RO.`,
+          });
+        }
+      }
+
+      req.body.roNumber = normalizedRO.roNumber;
+      req.body.roCode = normalizedRO.roCode;
+      req.body.roKey = normalizedRO.roKey;
+    }
+
     // Cập nhật các trường khác
     Object.assign(car, req.body);
 
@@ -360,6 +402,12 @@ const updateCar = async (req, res) => {
 
     res.json(updatedCar);
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.roKey) {
+      return res.status(400).json({
+        message: 'RO này đã tồn tại. Không thể cập nhật trùng RO.',
+      });
+    }
+
     console.error('Lỗi khi cập nhật xe:', error);
     res.status(500).json({ message: 'Lỗi server', error: error.message });
   }

@@ -1,12 +1,7 @@
 ﻿const mongoose = require('mongoose');
 const moment = require('moment-timezone');
 const { Schema } = mongoose;
-
-const normalizeROKey = (roNumber = '', roCode = '') => {
-  const number = String(roNumber || '').trim().toUpperCase().replace(/\s/g, '');
-  const code = String(roCode || '').trim().toUpperCase().replace(/\s/g, '');
-  return number || code || '';
-};
+const { normalizeROFields } = require('../utils/roKey');
 
 const carSchema = new Schema({
   plateNumber: {
@@ -106,7 +101,14 @@ carSchema.set('toObject', { virtuals: true });
 carSchema.set('toJSON', { virtuals: true });
 
 carSchema.pre('save', function (next) {
-  this.roKey = normalizeROKey(this.roNumber, this.roCode);
+  const normalized = normalizeROFields({
+    roNumber: this.roNumber,
+    roCode: this.roCode,
+  });
+
+  this.roNumber = normalized.roNumber;
+  this.roCode = normalized.roCode;
+  this.roKey = normalized.roKey;
 
   if (this.isModified('status')) {
     this.statusHistory.push({ status: this.status, timestamp: new Date() });
