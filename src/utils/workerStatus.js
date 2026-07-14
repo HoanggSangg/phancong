@@ -1,76 +1,60 @@
 const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 
+// Trạng thái xe khiến thợ được coi là đang bận (đồng bộ với wokerController)
+const BUSY_CAR_STATUSES = ['working', 'waiting_wash', 'waiting_handover', 'additional_repair'];
+
 const getOtherCarsForWorker = async (workerId, excludeCarId = null) => {
   const query = { 'workers.worker': workerId };
   if (excludeCarId) {
     query._id = { $ne: excludeCarId };
   }
-  return Car.find(query);
+  return Car.find(query).select('status');
 };
 
-const releaseWorkerExtended = async (workerId, excludeCarId) => {
-  const allCarsOfOldWorker = await getOtherCarsForWorker(workerId, excludeCarId);
-  const hasWorking = allCarsOfOldWorker.some((c) => c.status === 'working');
-  const hasWaitingWash = allCarsOfOldWorker.some((c) => c.status === 'waiting_wash');
-  const hasAdditionalRepair = allCarsOfOldWorker.some((c) => c.status === 'additional_repair');
-  const hasWaitingHandover = allCarsOfOldWorker.some((c) => c.status === 'waiting_handover');
+const hasActiveManualJob = (worker) =>
+  worker?.manualJobs?.some((job) => job.status === 'co_viec');
 
-  await Worker.findByIdAndUpdate(workerId, {
-    status: (hasWorking || hasWaitingWash || hasAdditionalRepair || hasWaitingHandover)
-      ? 'busy'
-      : 'available',
-  });
-};
+const hasBusyCarAssignment = (cars = []) =>
+  cars.some((car) => BUSY_CAR_STATUSES.includes(car.status));
 
-const releaseWorkerWorkingOnly = async (workerId, excludeCarId) => {
+/**
+ * Kiểm tra thợ có đang bận thực tế không (xe + việc ghi tay), không chỉ dựa field status.
+ */
+const isWorkerBusy = async (workerId, { excludeCarId = null } = {}) => {
+  const worker = await Worker.findById(workerId).select('manualJobs');
+  if (!worker) return false;
+
+  if (hasActiveManualJob(worker)) return true;
+
   const otherCars = await getOtherCarsForWorker(workerId, excludeCarId);
-  const hasWorking = otherCars.some((c) => c.status === 'working');
-
-  await Worker.findByIdAndUpdate(workerId, {
-    status: hasWorking ? 'busy' : 'available',
-  });
+  return hasBusyCarAssignment(otherCars);
 };
 
-const releaseWorkerDeliveredStyle = async (workerId, excludeCarId) => {
-  const allCarsOfWorker = await getOtherCarsForWorker(workerId, excludeCarId);
-  const hasWorking = allCarsOfWorker.some((c) => c.status === 'working');
-  const hasPending = allCarsOfWorker.some((c) => c.status === 'pending');
+/**
+ * Đồng bộ trạng thái thợ dựa trên xe đang gán + việc ghi tay.
+ * Luôn gọi sau khi car.save() để dữ liệu xe đã phản ánh trạng thái mới.
+ */
+const syncWorkerStatus = async (workerId) => {
+  if (!workerId) return;
 
-  if (hasWorking) {
-    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-  } else if (hasPending) {
-    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-  } else {
-    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
+  const worker = await Worker.findById(workerId).select('manualJobs status');
+  if (!worker) return;
+
+  const assignedCars = await Car.find({ 'workers.worker': workerId }).select('status');
+  const shouldBeBusy = hasActiveManualJob(worker) || hasBusyCarAssignment(assignedCars);
+  const nextStatus = shouldBeBusy ? 'busy' : 'available';
+
+  if (worker.status !== nextStatus) {
+    worker.status = nextStatus;
+    await worker.save();
   }
 };
 
-const updateWorkerStatusDefault = async (workerId) => {
-  const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
-  const hasWorking = allCarsOfWorker.some((c) => c.status === 'working');
-  const hasPending = allCarsOfWorker.some((c) => c.status === 'pending');
-  const hasWaitingWash = allCarsOfWorker.some((c) => c.status === 'waiting_wash');
-  const hasAdditionalRepair = allCarsOfWorker.some((c) => c.status === 'additional_repair');
-
-  if (hasWorking || hasWaitingWash || hasAdditionalRepair) {
-    await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-  } else if (hasPending) {
-    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-  } else {
-    await Worker.findByIdAndUpdate(workerId, { status: 'available' });
-  }
-};
-
-const releaseWorkers = async (workerIds, excludeCarId, mode) => {
-  const updater = {
-    extended: releaseWorkerExtended,
-    workingOnly: releaseWorkerWorkingOnly,
-    deliveredStyle: releaseWorkerDeliveredStyle,
-  }[mode];
-
-  for (const workerId of workerIds) {
-    await updater(workerId, excludeCarId);
+const syncWorkersStatus = async (workerIds = []) => {
+  const uniqueIds = [...new Set(workerIds.map(String).filter(Boolean))];
+  for (const workerId of uniqueIds) {
+    await syncWorkerStatus(workerId);
   }
 };
 
@@ -84,11 +68,10 @@ const populateCarWorkers = async (carId) =>
     ]);
 
 module.exports = {
+  BUSY_CAR_STATUSES,
   getOtherCarsForWorker,
-  releaseWorkerExtended,
-  releaseWorkerWorkingOnly,
-  releaseWorkerDeliveredStyle,
-  updateWorkerStatusDefault,
-  releaseWorkers,
+  isWorkerBusy,
+  syncWorkerStatus,
+  syncWorkersStatus,
   populateCarWorkers,
 };

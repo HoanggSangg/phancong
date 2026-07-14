@@ -18,8 +18,9 @@ const {
   resolveRepairHistoryWorkerFilter,
 } = require('../utils/revenueHelpers');
 const {
-  releaseWorkers,
-  updateWorkerStatusDefault,
+  isWorkerBusy,
+  syncWorkerStatus,
+  syncWorkersStatus,
   populateCarWorkers,
 } = require('../utils/workerStatus');
 const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
@@ -274,13 +275,7 @@ const createCar = async (req, res) => {
     }
 
     if (data.workers.length > 0) {
-      const shouldMarkWorkersBusy = car.status && car.status !== 'pending';
-
-      if (shouldMarkWorkersBusy) {
-        for (const w of data.workers) {
-          await Worker.findByIdAndUpdate(w.worker, { status: 'busy' });
-        }
-      }
+      await syncWorkersStatus(data.workers.map((w) => w.worker));
     }
 
     return res.status(201).json(car);
@@ -322,12 +317,15 @@ const updateCar = async (req, res) => {
     }
 
     // Nếu có cập nhật workers
+    let workersToSync = [];
+
     if (req.body.workers) {
       const newWorkerIds = req.body.workers.map(w => w.worker.toString());
       const oldWorkerIds = car.workers.map(w => w.worker.toString());
 
       const removed = oldWorkerIds.filter(id => !newWorkerIds.includes(id));
       const added = newWorkerIds.filter(id => !oldWorkerIds.includes(id));
+      workersToSync = [...oldWorkerIds, ...newWorkerIds];
 
       for (const wid of removed) {
         car.workerLogs.push({
@@ -336,9 +334,6 @@ const updateCar = async (req, res) => {
           note: 'Thợ bị gỡ khi cập nhật thông tin xe',
           timestamp: new Date()
         });
-
-        // ✅ Đặt trạng thái thợ thành 'available'
-        await Worker.findByIdAndUpdate(wid, { status: 'available' });
       }
 
       for (const wid of added) {
@@ -348,12 +343,8 @@ const updateCar = async (req, res) => {
           note: 'Thợ được thêm khi cập nhật thông tin xe',
           timestamp: new Date()
         });
-
-        // ✅ Đặt trạng thái thợ thành 'busy'
-        await Worker.findByIdAndUpdate(wid, { status: 'busy' });
       }
 
-      // Gán lại để tránh bị mất
       car.workers = req.body.workers;
       delete req.body.workers;
     }
@@ -400,6 +391,10 @@ const updateCar = async (req, res) => {
     // Lưu lại
     const updatedCar = await car.save();
 
+    if (workersToSync.length > 0) {
+      await syncWorkersStatus(workersToSync);
+    }
+
     res.json(updatedCar);
   } catch (error) {
     if (error.code === 11000 && error.keyPattern?.roKey) {
@@ -416,34 +411,35 @@ const updateCar = async (req, res) => {
 
 const updateCarStatus = async (req, res) => {
   const { id } = req.params;
-  const { status, newWorkerId } = req.body; // Thêm newWorkerId để chọn thợ mới
+  const { status, newWorkerId } = req.body;
+
+  const uniqueWorkerIds = (...groups) =>
+    [...new Set(groups.flat().filter(Boolean).map(String))];
 
   try {
     const car = await Car.findById(id).populate('workers.worker');
     if (!car) return res.status(404).json({ message: 'Xe không tìm thấy' });
 
     const currentStatus = car.status;
-    const carWorkerIds = car.workers.map(w => w.worker._id.toString());
+    const carWorkerIds = car.workers.map((w) => w.worker._id.toString());
 
-    // **LOGIC MỚI: KIỂM TRA CHUYỂN TRẠNG THÁI HỢP LỆ**
     if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
       const oldWorkerIds = [...carWorkerIds];
 
-      // Có chọn thợ/tài xế giao xe
       if (newWorkerId) {
         const handoverWorker = await Worker.findById(newWorkerId);
 
         if (!handoverWorker) {
           return res.status(404).json({
-            message: 'Thợ hoặc tài xế giao xe không tồn tại'
+            message: 'Thợ hoặc tài xế giao xe không tồn tại',
           });
         }
 
         const isOldWorker = oldWorkerIds.includes(newWorkerId.toString());
 
-        if (handoverWorker.status === 'busy' && !isOldWorker) {
+        if (!isOldWorker && await isWorkerBusy(newWorkerId, { excludeCarId: car._id })) {
           return res.status(400).json({
-            message: `Không thể chọn ${handoverWorker.name}. Người này đang bận.`
+            message: `Không thể chọn ${handoverWorker.name}. Người này đang bận.`,
           });
         }
 
@@ -453,7 +449,7 @@ const updateCarStatus = async (req, res) => {
               worker: oldWorkerId,
               action: 'removed',
               note: 'Rửa xe xong, chuyển sang chờ giao xe',
-              timestamp: new Date()
+              timestamp: new Date(),
             });
           }
         }
@@ -462,53 +458,41 @@ const updateCarStatus = async (req, res) => {
           worker: newWorkerId,
           action: 'added',
           note: 'Người giao xe được gán sau khi rửa xe xong',
-          timestamp: new Date()
+          timestamp: new Date(),
         });
 
-        car.workers = [{
-          worker: newWorkerId,
-          role: 'main'
-        }];
-
+        car.workers = [{ worker: newWorkerId, role: 'main' }];
         car.status = status;
         await car.save();
 
-        await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-        await releaseWorkers(
-          oldWorkerIds.filter((id) => id !== newWorkerId.toString()),
-          car._id,
-          'extended'
-        );
+        await syncWorkersStatus(uniqueWorkerIds(oldWorkerIds, newWorkerId));
 
         return res.status(200).json({
           message: 'Rửa xe xong, chuyển sang chờ giao xe và gán người giao xe thành công',
-          car: await populateCarWorkers(id)
+          car: await populateCarWorkers(id),
         });
       }
 
-      // Không chọn ai => khách tự lấy xe
       for (const oldWorkerId of oldWorkerIds) {
         car.workerLogs.push({
           worker: oldWorkerId,
           action: 'removed',
           note: 'Rửa xe xong, khách tự lấy xe',
-          timestamp: new Date()
+          timestamp: new Date(),
         });
       }
 
       car.workers = [];
       car.status = status;
       await car.save();
-
-      await releaseWorkers(oldWorkerIds, car._id, 'extended');
+      await syncWorkersStatus(oldWorkerIds);
 
       return res.status(200).json({
         message: 'Rửa xe xong, chuyển sang chờ giao xe - khách tự lấy xe',
-        car: await populateCarWorkers(id)
+        car: await populateCarWorkers(id),
       });
     }
-    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_WASH**
+
     if (currentStatus === 'done' && status === 'waiting_wash') {
       const prevPhaseLabel = 'sửa xe';
       const phaseLabel = 'rửa xe';
@@ -519,152 +503,115 @@ const updateCarStatus = async (req, res) => {
           return res.status(404).json({ message: 'Thợ mới không tồn tại' });
         }
 
-        if (newWorker.status === 'busy') {
+        if (await isWorkerBusy(newWorkerId, { excludeCarId: car._id })) {
           return res.status(400).json({
-            message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
+            message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`,
           });
         }
 
-        // Lưu log: Thợ cũ bị thay
         for (const oldWorker of car.workers) {
           const roleLabel = oldWorker.role === 'sub' ? 'phụ' : 'chính';
           car.workerLogs.push({
             worker: oldWorker.worker,
             action: 'removed',
             note: `Thợ ${roleLabel} lúc ${prevPhaseLabel} bị thay thế`,
-            timestamp: new Date()
+            timestamp: new Date(),
           });
         }
 
-        // Lưu log: Thợ mới được gán
         car.workerLogs.push({
           worker: newWorkerId,
           action: 'added',
           note: `Thợ chính lúc ${phaseLabel} được gán`,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
 
-        // Cập nhật thợ mới
-        car.workers = [{
-          worker: newWorkerId,
-          role: 'main'
-        }];
-
-        await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-        await releaseWorkers(carWorkerIds, car._id, 'workingOnly');
-
+        car.workers = [{ worker: newWorkerId, role: 'main' }];
         car.status = status;
         await car.save();
+        await syncWorkersStatus(uniqueWorkerIds(carWorkerIds, newWorkerId));
 
         return res.status(200).json({
           message: 'Chuyển sang chờ rửa xe với thợ mới thành công',
-          car: await populateCarWorkers(id)
-        });
-
-      } else {
-        // Không có thợ mới => giữ thợ cũ
-        car.status = status;
-        await car.save();
-
-        for (const workerId of carWorkerIds) {
-          await Worker.findByIdAndUpdate(workerId, { status: 'busy' });
-        }
-
-        return res.status(200).json({
-          message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công',
-          car: await populateCarWorkers(id)
+          car: await populateCarWorkers(id),
         });
       }
-    }
-
-
-
-
-
-    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ DONE SANG WAITING_HANDOVER**
-    if (currentStatus === 'done' && status === 'waiting_handover') {
-      await releaseWorkers(carWorkerIds, car._id, 'deliveredStyle');
 
       car.status = status;
       await car.save();
+      await syncWorkersStatus(carWorkerIds);
 
       return res.status(200).json({
-        message: 'Chuyển sang chờ giao xe thành công',
-        car: await populateCarWorkers(id)
+        message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công',
+        car: await populateCarWorkers(id),
       });
     }
 
-    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_WASH SANG ADDITIONAL_REPAIR**
+    if (currentStatus === 'done' && status === 'waiting_handover') {
+      car.status = status;
+      await car.save();
+      await syncWorkersStatus(carWorkerIds);
+
+      return res.status(200).json({
+        message: 'Chuyển sang chờ giao xe thành công',
+        car: await populateCarWorkers(id),
+      });
+    }
+
     if (currentStatus === 'waiting_wash' && status === 'additional_repair') {
       const phaseLabel = 'sửa bổ sung';
 
       if (!newWorkerId) {
         return res.status(400).json({
-          message: 'Cần chọn thợ mới cho sửa bổ sung'
+          message: 'Cần chọn thợ mới cho sửa bổ sung',
         });
       }
 
-      // Kiểm tra thợ mới có rảnh không
       const newWorker = await Worker.findById(newWorkerId);
       if (!newWorker) {
         return res.status(404).json({ message: 'Thợ mới không tồn tại' });
       }
 
-      if (newWorker.status === 'busy') {
+      if (await isWorkerBusy(newWorkerId, { excludeCarId: car._id })) {
         return res.status(400).json({
-          message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
+          message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`,
         });
       }
 
-      // Lưu lại thợ cũ để cập nhật trạng thái và ghi log
       const oldWorkerIds = [...carWorkerIds];
 
-      // 🔥 Ghi log: thợ cũ bị gỡ
       for (const oldWorkerId of oldWorkerIds) {
-        const oldWorkerObj = car.workers.find(w => w.worker.toString() === oldWorkerId);
+        const oldWorkerObj = car.workers.find((w) => w.worker.toString() === oldWorkerId);
         car.workerLogs.push({
           worker: oldWorkerId,
           action: 'removed',
           note: `Thợ ${oldWorkerObj?.role || 'chính'} lúc ${phaseLabel} bị thay thế`,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
       }
 
-      // 🔥 Ghi log: thợ mới được gán
       car.workerLogs.push({
         worker: newWorkerId,
         action: 'added',
         note: `Thợ chính lúc ${phaseLabel} được gán`,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
 
-      // Cập nhật thợ mới cho xe
-      car.workers = [{
-        worker: newWorkerId,
-        role: 'main'
-      }];
-
-      // Thợ mới → bận
-      await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-      await releaseWorkers(oldWorkerIds, car._id, 'workingOnly');
-
+      car.workers = [{ worker: newWorkerId, role: 'main' }];
       car.status = status;
       await car.save();
+      await syncWorkersStatus(uniqueWorkerIds(oldWorkerIds, newWorkerId));
 
       return res.status(200).json({
         message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
-        car: await populateCarWorkers(id)
+        car: await populateCarWorkers(id),
       });
     }
 
-
-    // **LOGIC MỚI: XỬ LÝ CHUYỂN TỪ WAITING_HANDOVER SANG ADDITIONAL_REPAIR**
     if (currentStatus === 'waiting_handover' && status === 'additional_repair') {
       if (!newWorkerId) {
         return res.status(400).json({
-          message: 'Cần chọn thợ mới cho sửa bổ sung'
+          message: 'Cần chọn thợ mới cho sửa bổ sung',
         });
       }
 
@@ -673,27 +620,22 @@ const updateCarStatus = async (req, res) => {
         return res.status(404).json({ message: 'Thợ mới không tồn tại' });
       }
 
-      if (newWorker.status === 'busy') {
+      if (await isWorkerBusy(newWorkerId, { excludeCarId: car._id })) {
         return res.status(400).json({
-          message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`
+          message: `Không thể chọn thợ ${newWorker.name}. Thợ này đang bận.`,
         });
       }
 
       const oldWorkerIds = [...carWorkerIds];
 
-      // Cập nhật thợ mới cho xe
-      car.workers = [{
-        worker: newWorkerId,
-        role: 'main'
-      }];
+      car.workers = [{ worker: newWorkerId, role: 'main' }];
 
-      // Ghi lại lịch sử thay đổi thợ
       for (const oldWorkerId of oldWorkerIds) {
         car.workerLogs.push({
           worker: oldWorkerId,
           action: 'removed',
           note: `Thợ bị thay khi chuyển trạng thái từ ${currentStatus} → ${status}`,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
       }
 
@@ -701,47 +643,39 @@ const updateCarStatus = async (req, res) => {
         worker: newWorkerId,
         action: 'added',
         note: `Thợ mới được chỉ định khi chuyển sang ${status}`,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
-
-      await Worker.findByIdAndUpdate(newWorkerId, { status: 'busy' });
-
-      await releaseWorkers(oldWorkerIds, car._id, 'workingOnly');
 
       car.status = status;
       await car.save();
+      await syncWorkersStatus(uniqueWorkerIds(oldWorkerIds, newWorkerId));
 
       return res.status(200).json({
         message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
-        car: await populateCarWorkers(id)
+        car: await populateCarWorkers(id),
       });
     }
 
-
-    // **LOGIC MỚI: XỬ LÝ CHUYỂN SANG DELIVERED**
     if (status === 'delivered') {
-      await releaseWorkers(carWorkerIds, car._id, 'deliveredStyle');
-
       car.status = status;
       await car.save();
+      await syncWorkersStatus(carWorkerIds);
 
       return res.status(200).json({
         message: 'Xe đã được giao thành công',
-        car: await populateCarWorkers(id)
+        car: await populateCarWorkers(id),
       });
     }
 
-    // **LOGIC CŨ: Nếu muốn đổi sang "working", kiểm tra thợ có đang bận không**
     if (status === 'working') {
       for (const workerId of carWorkerIds) {
         const otherWorkingCars = await Car.findOne({
-          _id: { $ne: car._id }, // bỏ qua xe hiện tại
+          _id: { $ne: car._id },
           'workers.worker': workerId,
           status: 'working',
         });
 
         if (otherWorkingCars) {
-          // Lấy tên thợ để hiển thị thông báo
           const worker = await Worker.findById(workerId);
           return res.status(400).json({
             message: `Không thể chuyển sang 'working'. Thợ ${worker?.name || 'không rõ'} đang sửa xe khác.`,
@@ -750,19 +684,13 @@ const updateCarStatus = async (req, res) => {
       }
     }
 
-    // **LOGIC CŨ: Nếu vượt qua được kiểm tra thì cập nhật trạng thái**
     car.status = status;
     await car.save();
+    await syncWorkersStatus(carWorkerIds);
 
-    // **LOGIC CŨ: Cập nhật trạng thái thợ**
-    for (const workerId of carWorkerIds) {
-      await updateWorkerStatusDefault(workerId);
-    }
-
-    const updatedCar = await populateCarWorkers(id);
     return res.status(200).json({
       message: `Cập nhật trạng thái xe thành công: ${status}`,
-      car: updatedCar
+      car: await populateCarWorkers(id),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -793,16 +721,7 @@ const deleteCar = async (req, res) => {
     await RepairOrderItem.deleteMany({ car: car._id });
 
     for (const w of car.workers) {
-      const workerId = w.worker;
-      const allCarsOfWorker = await Car.find({ 'workers.worker': workerId });
-
-      const hasActiveJob = allCarsOfWorker.some((c) =>
-        ['working', 'waiting_wash', 'additional_repair'].includes(c.status)
-      );
-
-      await Worker.findByIdAndUpdate(workerId, {
-        status: hasActiveJob ? 'busy' : 'available',
-      });
+      await syncWorkerStatus(w.worker);
     }
 
     if (car.supervisor) {
@@ -1278,16 +1197,7 @@ const getRepairHistory = async (req, res) => {
     if (req.user.role === 'ktv') {
       return res.json({
         ...baseResponse,
-        items: responseItems.map(
-          ({
-            amount,
-            unitPrice,
-            quantity,
-            assignments,
-            allAssignments,
-            ...rest
-          }) => rest
-        ),
+        items: responseItems.map(({ allAssignments, ...rest }) => rest),
       });
     }
 

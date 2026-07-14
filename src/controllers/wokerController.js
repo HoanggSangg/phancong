@@ -19,6 +19,7 @@ const {
   applyDeductionsToGross,
   getRevenueDeductions,
 } = require('../utils/revenueDeductions');
+const { syncWorkerStatus } = require('../utils/workerStatus');
 
 const uploadImage = async (image) => {
   const result = await cloudinary.uploader.upload(image, {
@@ -563,7 +564,6 @@ const addManualJobToWorker = async (req, res) => {
             status: 'co_viec'
           }
         },
-        status: 'busy'
       },
       {
         new: true,
@@ -578,10 +578,13 @@ const addManualJobToWorker = async (req, res) => {
       });
     }
 
+    await syncWorkerStatus(id);
+    const syncedWorker = await Worker.findById(id);
+
     return res.status(200).json({
       success: true,
       message: 'Thêm công việc ghi tay thành công',
-      worker
+      worker: syncedWorker
     });
   } catch (error) {
     return res.status(500).json({
@@ -630,22 +633,13 @@ const removeManualJobFromWorker = async (req, res) => {
       });
     }
 
-    const hasManualJob = worker.manualJobs?.some(job => job.status === 'co_viec');
-
-    const busyCar = await Car.findOne({
-      'workers.worker': id,
-      status: {
-        $in: ['working', 'waiting_wash', 'waiting_handover', 'additional_repair']
-      }
-    });
-
-    worker.status = hasManualJob || busyCar ? 'busy' : 'available';
-    await worker.save();
+    await syncWorkerStatus(id);
+    const syncedWorker = await Worker.findById(id);
 
     return res.status(200).json({
       success: true,
       message: 'Xóa công việc ghi tay thành công',
-      worker
+      worker: syncedWorker
     });
   } catch (error) {
     return res.status(500).json({

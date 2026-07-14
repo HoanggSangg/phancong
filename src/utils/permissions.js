@@ -13,7 +13,7 @@ const PERMISSION_CATALOG = [
   { key: 'workers.main', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'workers.woker', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
   { key: 'workers.available', defaultRoles: ['admin', 'giam_sat'] },
-  { key: 'workers.repair-history', defaultRoles: ['admin', 'giam_sat'] },
+  { key: 'workers.repair-history', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
   { key: 'teams.manage', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'reports.revenue', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'reports.dashboard', defaultRoles: ['admin'] },
