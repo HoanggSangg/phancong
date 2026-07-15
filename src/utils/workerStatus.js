@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const moment = require('moment-timezone');
 const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 
@@ -45,8 +46,24 @@ const getOtherCarsForWorker = async (workerId, excludeCarId = null) => {
   return Car.find(query).select('status').lean();
 };
 
-const hasActiveManualJob = (worker) =>
-  worker?.manualJobs?.some((job) => job.status === 'co_viec');
+const hasActiveManualJob = (worker, referenceDate = new Date()) => {
+  const today = moment(referenceDate).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+
+  return worker?.manualJobs?.some((job) => {
+    if (job.status !== 'co_viec') return false;
+    const jobDay = moment(job.date).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+    return jobDay === today;
+  });
+};
+
+const extractWorkerIds = (workers = []) =>
+  [...new Set(
+    workers
+      .map((entry) => entry?.worker?._id || entry?.worker || entry)
+      .filter(Boolean)
+      .map(String)
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+  )];
 
 const hasBusyCarAssignment = (cars = []) =>
   cars.some((car) => BUSY_CAR_STATUSES.includes(car.status));
@@ -135,12 +152,23 @@ const syncWorkerStatus = async (workerId) => {
 };
 
 const syncWorkersStatus = async (workerIds = []) => {
-  const uniqueIds = [...new Set(workerIds.map(String).filter(Boolean))];
+  const uniqueIds = extractWorkerIds(workerIds.map((id) => ({ worker: id })));
   const results = [];
   for (const workerId of uniqueIds) {
     results.push(await syncWorkerStatus(workerId));
   }
   return results;
+};
+
+const syncWorkersForCar = async (carId, extraWorkerIds = []) => {
+  const car = await Car.findById(carId).select('workers').lean();
+  const workerIds = extractWorkerIds([
+    ...(car?.workers || []),
+    ...extraWorkerIds.map((id) => ({ worker: id })),
+  ]);
+
+  if (workerIds.length === 0) return [];
+  return syncWorkersStatus(workerIds);
 };
 
 const populateCarWorkers = async (carId) =>
@@ -160,5 +188,7 @@ module.exports = {
   isWorkerBusy,
   syncWorkerStatus,
   syncWorkersStatus,
+  syncWorkersForCar,
+  extractWorkerIds,
   populateCarWorkers,
 };
