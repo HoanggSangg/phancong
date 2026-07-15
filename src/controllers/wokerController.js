@@ -19,7 +19,7 @@ const {
   applyDeductionsToGross,
   getRevenueDeductions,
 } = require('../utils/revenueDeductions');
-const { syncWorkerStatus } = require('../utils/workerStatus');
+const { syncWorkerStatus, isWorkerBusy, BUSY_CAR_STATUSES } = require('../utils/workerStatus');
 
 const uploadImage = async (image) => {
   const result = await cloudinary.uploader.upload(image, {
@@ -222,14 +222,30 @@ const deleteWorker = async (req, res) => {
   }
 };
 
-// Thợ đang rảnh
+// Thợ đang rảnh — tính theo xe thực tế + việc ghi tay, tự sửa field status nếu lệch
 const getAvailableWorkers = async (req, res) => {
   try {
-    const workers = await Worker.find({ status: 'available' })
+    const workers = await Worker.find()
       .populate('team', 'name')
       .sort({ createdAt: -1 });
 
-    return res.status(200).json(workers);
+    const availableWorkers = [];
+
+    for (const worker of workers) {
+      const busy = await isWorkerBusy(worker._id);
+      const nextStatus = busy ? 'busy' : 'available';
+
+      if (worker.status !== nextStatus) {
+        await Worker.findByIdAndUpdate(worker._id, { $set: { status: nextStatus } });
+        worker.status = nextStatus;
+      }
+
+      if (!busy) {
+        availableWorkers.push(worker);
+      }
+    }
+
+    return res.status(200).json(availableWorkers);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -238,18 +254,27 @@ const getAvailableWorkers = async (req, res) => {
 // Thợ đang bận và xe đang làm
 const getBusyWorkersWithCars = async (req, res) => {
   try {
-    const busyWorkers = await Worker.find({ status: 'busy' });
+    const workers = await Worker.find().sort({ createdAt: -1 });
 
-    const workersWithCars = await Promise.all(
-      busyWorkers.map(async (worker) => {
-        const cars = await Car.find({
-          status: { $ne: 'done' },
-          'workers.worker': worker._id
-        }).select('plateNumber externalCarTypeName status');
+    const workersWithCars = [];
 
-        return { worker, cars };
-      })
-    );
+    for (const worker of workers) {
+      const busy = await isWorkerBusy(worker._id);
+      const nextStatus = busy ? 'busy' : 'available';
+
+      if (worker.status !== nextStatus) {
+        await Worker.findByIdAndUpdate(worker._id, { $set: { status: nextStatus } });
+      }
+
+      if (!busy) continue;
+
+      const cars = await Car.find({
+        status: { $in: BUSY_CAR_STATUSES },
+        'workers.worker': worker._id,
+      }).select('plateNumber externalCarTypeName status');
+
+      workersWithCars.push({ worker, cars });
+    }
 
     return res.status(200).json(workersWithCars);
   } catch (error) {
