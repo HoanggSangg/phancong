@@ -1,15 +1,26 @@
+const mongoose = require('mongoose');
 const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 
-// Trạng thái xe khiến thợ được coi là đang bận (đồng bộ với wokerController)
-const BUSY_CAR_STATUSES = ['working', 'waiting_wash', 'waiting_handover', 'additional_repair'];
+// Chỉ các trạng thái xe đang cần thợ trực tiếp xử lý mới giữ thợ ở trạng thái bận
+const BUSY_CAR_STATUSES = ['working', 'waiting_wash', 'additional_repair'];
+
+const normalizeWorkerId = (workerId) => {
+  if (!workerId) return null;
+  const id = String(workerId);
+  if (!mongoose.Types.ObjectId.isValid(id)) return null;
+  return new mongoose.Types.ObjectId(id);
+};
 
 const getOtherCarsForWorker = async (workerId, excludeCarId = null) => {
-  const query = { 'workers.worker': workerId };
+  const oid = normalizeWorkerId(workerId);
+  if (!oid) return [];
+
+  const query = { 'workers.worker': oid };
   if (excludeCarId) {
     query._id = { $ne: excludeCarId };
   }
-  return Car.find(query).select('status');
+  return Car.find(query).select('status').lean();
 };
 
 const hasActiveManualJob = (worker) =>
@@ -22,12 +33,15 @@ const hasBusyCarAssignment = (cars = []) =>
  * Kiểm tra thợ có đang bận thực tế không (xe + việc ghi tay), không chỉ dựa field status.
  */
 const isWorkerBusy = async (workerId, { excludeCarId = null } = {}) => {
-  const worker = await Worker.findById(workerId).select('manualJobs');
+  const oid = normalizeWorkerId(workerId);
+  if (!oid) return false;
+
+  const worker = await Worker.findById(oid).select('manualJobs').lean();
   if (!worker) return false;
 
   if (hasActiveManualJob(worker)) return true;
 
-  const otherCars = await getOtherCarsForWorker(workerId, excludeCarId);
+  const otherCars = await getOtherCarsForWorker(oid, excludeCarId);
   return hasBusyCarAssignment(otherCars);
 };
 
@@ -36,19 +50,17 @@ const isWorkerBusy = async (workerId, { excludeCarId = null } = {}) => {
  * Luôn gọi sau khi car.save() để dữ liệu xe đã phản ánh trạng thái mới.
  */
 const syncWorkerStatus = async (workerId) => {
-  if (!workerId) return;
+  const oid = normalizeWorkerId(workerId);
+  if (!oid) return;
 
-  const worker = await Worker.findById(workerId).select('manualJobs status');
+  const worker = await Worker.findById(oid).select('manualJobs status').lean();
   if (!worker) return;
 
-  const assignedCars = await Car.find({ 'workers.worker': workerId }).select('status');
+  const assignedCars = await Car.find({ 'workers.worker': oid }).select('status').lean();
   const shouldBeBusy = hasActiveManualJob(worker) || hasBusyCarAssignment(assignedCars);
   const nextStatus = shouldBeBusy ? 'busy' : 'available';
 
-  if (worker.status !== nextStatus) {
-    worker.status = nextStatus;
-    await worker.save();
-  }
+  await Worker.findByIdAndUpdate(oid, { $set: { status: nextStatus } });
 };
 
 const syncWorkersStatus = async (workerIds = []) => {

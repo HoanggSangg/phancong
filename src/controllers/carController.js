@@ -393,6 +393,8 @@ const updateCar = async (req, res) => {
 
     if (workersToSync.length > 0) {
       await syncWorkersStatus(workersToSync);
+      const populated = await populateCarWorkers(car._id);
+      return res.json(populated);
     }
 
     res.json(updatedCar);
@@ -421,7 +423,9 @@ const updateCarStatus = async (req, res) => {
     if (!car) return res.status(404).json({ message: 'Xe không tìm thấy' });
 
     const currentStatus = car.status;
-    const carWorkerIds = car.workers.map((w) => w.worker._id.toString());
+    const carWorkerIds = car.workers.map((w) =>
+      String(w.worker?._id || w.worker)
+    );
 
     if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
       const oldWorkerIds = [...carWorkerIds];
@@ -657,6 +661,16 @@ const updateCarStatus = async (req, res) => {
     }
 
     if (status === 'delivered') {
+      for (const oldWorkerId of carWorkerIds) {
+        car.workerLogs.push({
+          worker: oldWorkerId,
+          action: 'removed',
+          note: 'Xe đã giao — giải phóng thợ',
+          timestamp: new Date(),
+        });
+      }
+
+      car.workers = [];
       car.status = status;
       await car.save();
       await syncWorkersStatus(carWorkerIds);
