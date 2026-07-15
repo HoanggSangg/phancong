@@ -19,6 +19,8 @@ const {
 } = require('../utils/revenueHelpers');
 const {
   isWorkerBusy,
+  syncWorkerStatus,
+  syncWorkersStatus,
   populateCarWorkers,
 } = require('../utils/workerStatus');
 const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
@@ -247,6 +249,10 @@ const createCar = async (req, res) => {
     const car = new Car(data);
     await car.save();
 
+    if (data.workers.length > 0) {
+      await syncWorkersStatus(data.workers.map((w) => w.worker));
+    }
+
     if (repairItems.length > 0) {
       await RepairOrderItem.insertMany(
         repairItems.map((item) => ({
@@ -309,6 +315,9 @@ const updateCar = async (req, res) => {
     if (!car) {
       return res.status(404).json({ message: 'Không tìm thấy xe' });
     }
+
+    const oldStatus = car.status;
+    const oldWorkerIdsBeforeUpdate = car.workers.map((w) => String(w.worker));
 
     // Nếu có cập nhật workers
     let workersToSync = [];
@@ -384,6 +393,19 @@ const updateCar = async (req, res) => {
 
     // Lưu lại
     const updatedCar = await car.save();
+
+    const statusChanged =
+      req.body.status !== undefined && String(req.body.status) !== String(oldStatus);
+    const syncIds =
+      workersToSync.length > 0
+        ? workersToSync
+        : statusChanged
+          ? [...new Set([...oldWorkerIdsBeforeUpdate, ...car.workers.map((w) => String(w.worker))])]
+          : [];
+
+    if (syncIds.length > 0) {
+      await syncWorkersStatus(syncIds);
+    }
 
     if (workersToSync.length > 0) {
       const populated = await populateCarWorkers(car._id);
@@ -462,6 +484,8 @@ const updateCarStatus = async (req, res) => {
         car.status = status;
         await car.save();
 
+        await syncWorkersStatus(uniqueWorkerIds(oldWorkerIds, newWorkerId));
+
         return res.status(200).json({
           message: 'Rửa xe xong, chuyển sang chờ giao xe và gán người giao xe thành công',
           car: await populateCarWorkers(id),
@@ -480,6 +504,8 @@ const updateCarStatus = async (req, res) => {
       car.workers = [];
       car.status = status;
       await car.save();
+      await syncWorkersStatus(oldWorkerIds);
+
       return res.status(200).json({
         message: 'Rửa xe xong, chuyển sang chờ giao xe - khách tự lấy xe',
         car: await populateCarWorkers(id),
@@ -522,6 +548,8 @@ const updateCarStatus = async (req, res) => {
         car.workers = [{ worker: newWorkerId, role: 'main' }];
         car.status = status;
         await car.save();
+        await syncWorkersStatus(uniqueWorkerIds(carWorkerIds, newWorkerId));
+
         return res.status(200).json({
           message: 'Chuyển sang chờ rửa xe với thợ mới thành công',
           car: await populateCarWorkers(id),
@@ -530,6 +558,8 @@ const updateCarStatus = async (req, res) => {
 
       car.status = status;
       await car.save();
+      await syncWorkersStatus(carWorkerIds);
+
       return res.status(200).json({
         message: 'Chuyển sang chờ rửa xe với thợ hiện tại thành công',
         car: await populateCarWorkers(id),
@@ -539,6 +569,8 @@ const updateCarStatus = async (req, res) => {
     if (currentStatus === 'done' && status === 'waiting_handover') {
       car.status = status;
       await car.save();
+      await syncWorkersStatus(carWorkerIds);
+
       return res.status(200).json({
         message: 'Chuyển sang chờ giao xe thành công',
         car: await populateCarWorkers(id),
@@ -587,6 +619,8 @@ const updateCarStatus = async (req, res) => {
       car.workers = [{ worker: newWorkerId, role: 'main' }];
       car.status = status;
       await car.save();
+      await syncWorkersStatus(uniqueWorkerIds(oldWorkerIds, newWorkerId));
+
       return res.status(200).json({
         message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
         car: await populateCarWorkers(id),
@@ -633,6 +667,8 @@ const updateCarStatus = async (req, res) => {
 
       car.status = status;
       await car.save();
+      await syncWorkersStatus(uniqueWorkerIds(oldWorkerIds, newWorkerId));
+
       return res.status(200).json({
         message: 'Chuyển sang sửa bổ sung với thợ mới thành công',
         car: await populateCarWorkers(id),
@@ -652,6 +688,8 @@ const updateCarStatus = async (req, res) => {
       car.workers = [];
       car.status = status;
       await car.save();
+      await syncWorkersStatus(carWorkerIds);
+
       return res.status(200).json({
         message: 'Xe đã được giao thành công',
         car: await populateCarWorkers(id),
@@ -677,6 +715,8 @@ const updateCarStatus = async (req, res) => {
 
     car.status = status;
     await car.save();
+    await syncWorkersStatus(carWorkerIds);
+
     return res.status(200).json({
       message: `Cập nhật trạng thái xe thành công: ${status}`,
       car: await populateCarWorkers(id),
@@ -708,6 +748,10 @@ const deleteCar = async (req, res) => {
     req.auditDeleted = { label: car.plateNumber };
 
     await RepairOrderItem.deleteMany({ car: car._id });
+
+    for (const w of car.workers) {
+      await syncWorkerStatus(w.worker);
+    }
 
     if (car.supervisor) {
       const stillHasJob = await Car.exists({ supervisor: car.supervisor });

@@ -122,16 +122,23 @@ const isWorkerBusy = async (workerId, { excludeCarId = null } = {}) => {
 };
 
 /**
- * Chỉ tính toán — KHÔNG ghi đè worker.status trong DB.
- * Trạng thái thợ trong DB do admin/quản lý tự cập nhật.
+ * Đồng bộ trạng thái thợ vào DB dựa trên xe đang gán + việc ghi tay.
+ * Gọi sau khi car.save() hoặc thay đổi gán thợ / việc ghi tay.
  */
-const syncWorkerStatus = async (workerId) => evaluateWorkerAvailability(workerId);
+const syncWorkerStatus = async (workerId) => {
+  const availability = await evaluateWorkerAvailability(workerId);
+  const oid = normalizeWorkerId(workerId);
+  if (!oid) return availability;
+
+  await Worker.findByIdAndUpdate(oid, { $set: { status: availability.status } });
+  return availability;
+};
 
 const syncWorkersStatus = async (workerIds = []) => {
   const uniqueIds = [...new Set(workerIds.map(String).filter(Boolean))];
   const results = [];
   for (const workerId of uniqueIds) {
-    results.push(await evaluateWorkerAvailability(workerId));
+    results.push(await syncWorkerStatus(workerId));
   }
   return results;
 };

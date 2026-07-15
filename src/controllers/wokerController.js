@@ -19,7 +19,7 @@ const {
   applyDeductionsToGross,
   getRevenueDeductions,
 } = require('../utils/revenueDeductions');
-const { evaluateWorkerAvailability } = require('../utils/workerStatus');
+const { evaluateWorkerAvailability, syncWorkerStatus } = require('../utils/workerStatus');
 
 const uploadImage = async (image) => {
   const result = await cloudinary.uploader.upload(image, {
@@ -49,7 +49,7 @@ const getAllWorkers = async (req, res) => {
 
       return res.status(200).json([{
         ...worker.toObject(),
-        isBusy: availability.isBusy,
+        isBusy: worker.status === 'busy',
         busyCarsCount: availability.busyCarsCount,
         pendingCarsCount: availability.pendingCarsCount,
         hasManualJob: availability.hasManualJob,
@@ -64,7 +64,7 @@ const getAllWorkers = async (req, res) => {
 
       result.push({
         ...worker.toObject(),
-        isBusy: availability.isBusy,
+        isBusy: worker.status === 'busy',
         busyCarsCount: availability.busyCarsCount,
         pendingCarsCount: availability.pendingCarsCount,
         hasManualJob: availability.hasManualJob,
@@ -248,10 +248,10 @@ const deleteWorker = async (req, res) => {
   }
 };
 
-// Thợ đang rảnh — cùng logic evaluateWorkerAvailability với Chi tiết công việc
+// Thợ đang rảnh — đọc trạng thái từ DB (được sync khi đổi trạng thái xe)
 const getAvailableWorkers = async (req, res) => {
   try {
-    const workers = await Worker.find()
+    const workers = await Worker.find({ status: 'available' })
       .populate('team', 'name')
       .sort({ createdAt: -1 });
 
@@ -260,15 +260,13 @@ const getAvailableWorkers = async (req, res) => {
     for (const worker of workers) {
       const availability = await evaluateWorkerAvailability(worker._id);
 
-      if (!availability.isBusy) {
-        availableWorkers.push({
-          ...worker.toObject(),
-          isBusy: false,
-          busyCarsCount: availability.busyCarsCount,
-          pendingCarsCount: availability.pendingCarsCount,
-          hasManualJob: availability.hasManualJob,
-        });
-      }
+      availableWorkers.push({
+        ...worker.toObject(),
+        isBusy: false,
+        busyCarsCount: availability.busyCarsCount,
+        pendingCarsCount: availability.pendingCarsCount,
+        hasManualJob: availability.hasManualJob,
+      });
     }
 
     return res.status(200).json(availableWorkers);
@@ -280,13 +278,11 @@ const getAvailableWorkers = async (req, res) => {
 // Thợ đang bận và xe đang làm
 const getBusyWorkersWithCars = async (req, res) => {
   try {
-    const workers = await Worker.find().populate('team', 'name').sort({ createdAt: -1 });
+    const workers = await Worker.find({ status: 'busy' }).populate('team', 'name').sort({ createdAt: -1 });
     const workersWithCars = [];
 
     for (const worker of workers) {
       const availability = await evaluateWorkerAvailability(worker._id);
-
-      if (!availability.isBusy) continue;
 
       workersWithCars.push({
         worker: {
@@ -627,10 +623,14 @@ const addManualJobToWorker = async (req, res) => {
       });
     }
 
+    await syncWorkerStatus(id);
+
+    const syncedWorker = await Worker.findById(id);
+
     return res.status(200).json({
       success: true,
       message: 'Thêm công việc ghi tay thành công',
-      worker,
+      worker: syncedWorker,
     });
   } catch (error) {
     return res.status(500).json({
@@ -679,10 +679,14 @@ const removeManualJobFromWorker = async (req, res) => {
       });
     }
 
+    await syncWorkerStatus(id);
+
+    const syncedWorker = await Worker.findById(id);
+
     return res.status(200).json({
       success: true,
       message: 'Xóa công việc ghi tay thành công',
-      worker,
+      worker: syncedWorker,
     });
   } catch (error) {
     return res.status(500).json({
