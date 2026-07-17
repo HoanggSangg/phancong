@@ -453,6 +453,17 @@ const updateCarStatus = async (req, res) => {
       });
     }
 
+    if (currentStatus === 'working' && status === 'done') {
+      car.status = status;
+      await car.save();
+      await syncWorkersForCar(id, carWorkerIds);
+
+      return res.status(200).json({
+        message: 'Sửa xong — giữ phân công thợ trên xe',
+        car: await populateCarWorkers(id),
+      });
+    }
+
     if (currentStatus === 'waiting_wash' && status === 'waiting_handover') {
       const oldWorkerIds = [...carWorkerIds];
 
@@ -503,16 +514,6 @@ const updateCarStatus = async (req, res) => {
         });
       }
 
-      for (const oldWorkerId of oldWorkerIds) {
-        car.workerLogs.push({
-          worker: oldWorkerId,
-          action: 'removed',
-          note: 'Rửa xe xong, khách tự lấy xe',
-          timestamp: new Date(),
-        });
-      }
-
-      car.workers = [];
       car.status = status;
       await car.save();
       await syncWorkersForCar(id, oldWorkerIds);
@@ -687,16 +688,6 @@ const updateCarStatus = async (req, res) => {
     }
 
     if (status === 'delivered') {
-      for (const oldWorkerId of carWorkerIds) {
-        car.workerLogs.push({
-          worker: oldWorkerId,
-          action: 'removed',
-          note: 'Xe đã giao — giải phóng thợ',
-          timestamp: new Date(),
-        });
-      }
-
-      car.workers = [];
       car.status = status;
       await car.save();
       await syncWorkersForCar(id, carWorkerIds);
