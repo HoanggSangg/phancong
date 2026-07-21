@@ -18,10 +18,14 @@ const authenticate = async (req, res, next) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const cached = userCache.get(String(decoded.userId));
-    if (cached && cached.expiresAt > Date.now()) {
+    if (cached && cached.expiresAt > Date.now() && cached.user) {
       req.user = cached.user;
       setupAuditLog(req, res);
       return next();
+    }
+
+    if (cached && !cached.user) {
+      userCache.delete(String(decoded.userId));
     }
 
     const user = await User.findById(decoded.userId).select('-password');
@@ -48,22 +52,26 @@ const access = (roles, permission) => (req, res, next) => {
     return res.status(401).json({ message: 'Chưa đăng nhập' });
   }
 
-  if (req.user.role === 'admin') {
-    return next();
-  }
-
-  if (usesCustomPermissions(req.user)) {
-    if (permission && hasPermission(req.user, permission)) {
+  try {
+    if (req.user.role === 'admin') {
       return next();
     }
+
+    if (usesCustomPermissions(req.user)) {
+      if (permission && hasPermission(req.user, permission)) {
+        return next();
+      }
+      return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
+    }
+
+    if (roles.includes(req.user.role)) {
+      return next();
+    }
+
     return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Lỗi kiểm tra quyền truy cập' });
   }
-
-  if (roles.includes(req.user.role)) {
-    return next();
-  }
-
-  return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
 };
 
 const signToken = (userId) => jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });

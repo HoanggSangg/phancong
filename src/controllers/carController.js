@@ -885,6 +885,21 @@ const getWorkingAndPendingCars = async (req, res) => {
 };
 
 
+const parseDeliveryDate = (deliveryTime) => {
+  if (!deliveryTime || typeof deliveryTime !== 'string') return null;
+
+  const normalized = deliveryTime.trim();
+  const match = normalized.match(/^(\d{2})-(\d{2})-(\d{4})\s+(\d{1,2})/);
+  if (!match) return null;
+
+  const [, day, month, year, hour] = match;
+  const deliveryDate = new Date(
+    `${year}-${month}-${day}T${hour.padStart(2, '0')}:00:00`
+  );
+
+  return Number.isNaN(deliveryDate.getTime()) ? null : deliveryDate;
+};
+
 const getOverdueCars = async (req, res) => {
   try {
     const allCars = await Car.find({
@@ -895,18 +910,15 @@ const getOverdueCars = async (req, res) => {
       .populate(CAR_LIST_POPULATE)
       .lean();
 
-    const overdueCars = allCars.filter(car => {
-      const [date, time] = car.deliveryTime.split(' ');
-      const [day, month, year] = date.split('-');
-      const hour = parseInt(time.replace('h', ''), 10);
-
-      const deliveryDate = new Date(`${year}-${month}-${day}T${hour.toString().padStart(2, '0')}:00:00`);
-      return deliveryDate < new Date();
+    const now = new Date();
+    const overdueCars = allCars.filter((car) => {
+      const deliveryDate = parseDeliveryDate(car.deliveryTime);
+      return deliveryDate && deliveryDate < now;
     });
 
     return res.status(200).json({ cars: overdueCars });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return res.status(500).json({ message: err.message || 'Không tải được danh sách xe trễ hẹn' });
   }
 };
 

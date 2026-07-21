@@ -105,13 +105,30 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const corsOptions = {
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'http://192.168.1.250:5173',
-    'http://100.127.133.38:5173',
-    'https://fe-phancong.vercel.app',
-  ],
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+
+    const allowedOrigins = new Set([
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://192.168.1.250:5173',
+      'http://100.127.133.38:5173',
+      'https://fe-phancong.vercel.app',
+    ]);
+
+    if (
+      allowedOrigins.has(origin)
+      || /^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin)
+      || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
+      || /^http:\/\/localhost:\d+$/.test(origin)
+    ) {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Origin', 'Content-Type', 'Accept', 'Authorization', 'X-Api-Key'],
   credentials: true,
