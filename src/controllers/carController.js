@@ -57,6 +57,84 @@ const findCarsForList = (filter = {}) =>
     .populate(CAR_LIST_POPULATE)
     .lean();
 
+const escapeRegex = (value = '') =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizePlateSearch = (plate = '') =>
+  String(plate || '').trim().toUpperCase().replace(/\s/g, '');
+
+const buildManageCarsFilter = (query = {}, ktvWorkerId = null) => {
+  const filter = {};
+  const plateSearch = normalizePlateSearch(query.plateNumber);
+
+  if (ktvWorkerId && query.mine === '1') {
+    filter['workers.worker'] = ktvWorkerId;
+  }
+
+  if (query.location && query.location !== 'all') {
+    filter.location = query.location;
+  }
+
+  if (query.supervisor) {
+    filter.supervisor = query.supervisor;
+  }
+
+  if (plateSearch) {
+    filter.plateNumber = { $regex: escapeRegex(plateSearch), $options: 'i' };
+    return filter;
+  }
+
+  const statusFilter = query.statusFilter || 'not_delivered';
+
+  if (statusFilter === 'delivered') {
+    filter.status = 'delivered';
+    const month = query.month || moment().tz('Asia/Ho_Chi_Minh').format('YYYY-MM');
+    filter.currentDate = { $regex: `^${escapeRegex(month)}` };
+  } else if (statusFilter === 'not_delivered') {
+    filter.status = { $ne: 'delivered' };
+  }
+
+  if (query.date) {
+    filter.currentDate = String(query.date);
+  }
+
+  return filter;
+};
+
+const getManageCarsList = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const ktvWorkerId = getKtvWorkerId(req.user);
+    const filter = buildManageCarsFilter(req.query, ktvWorkerId);
+
+    const skip = (page - 1) * limit;
+
+    const [cars, total] = await Promise.all([
+      Car.find(filter)
+        .select(CAR_LIST_SELECT)
+        .populate(CAR_LIST_POPULATE)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Car.countDocuments(filter),
+    ]);
+
+    res.json({
+      cars,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const mapExternalItemToRepairOrder = (item, car) => ({
   car: car._id,
   plateNumber: car.plateNumber,
@@ -1721,6 +1799,7 @@ const notifyAdminAboutCar = async (req, res) => {
 
 module.exports = {
   getAllCars,
+  getManageCarsList,
   getCarById,
   createCar,
   updateCar,

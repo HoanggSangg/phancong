@@ -10,6 +10,7 @@ router.get('/working-pending', access(['admin', 'giam_sat', 'ktv'], 'cars.today'
 router.get('/by-location/:locationId', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarsByLocation);
 router.get('/by-plate/:plateNumber', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getCarByPlateNumber);
 router.get('/overdue', access(['admin', 'giam_sat', 'ktv'], 'cars.today'), carController.getOverdueCars);
+router.get('/manage-list', access(['admin', 'giam_sat', 'ktv'], 'cars.manage'), carController.getManageCarsList);
 router.get('/repair-history', access(['admin', 'giam_sat', 'ktv'], 'workers.repair-history'), carController.getRepairHistory);
 router.get('/:id/repair-items', access(['admin', 'giam_sat', 'ktv'], 'cars.manage'), carController.getCarRepairItems);
 router.put('/:id/repair-items/assignments', access(['admin', 'giam_sat'], 'cars.add'), carController.assignRepairItemWorkers);
