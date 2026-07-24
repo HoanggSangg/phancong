@@ -119,6 +119,62 @@ const evaluateWorkerAvailability = async (workerId) => {
 };
 
 /**
+ * Batch availability cho danh sách thợ (tránh N+1).
+ * @param {Array} workers - docs đã có manualJobs (plain hoặc mongoose)
+ */
+const evaluateWorkersAvailabilityBatch = async (workers = []) => {
+  const list = workers.filter(Boolean);
+  if (!list.length) return new Map();
+
+  const ids = list
+    .map((w) => normalizeWorkerId(w._id || w))
+    .filter(Boolean);
+
+  if (!ids.length) return new Map();
+
+  const cars = await Car.find({
+    $or: [
+      { 'workers.worker': { $in: ids } },
+      { 'workers.worker': { $in: ids.map(String) } },
+    ],
+  })
+    .select('status plateNumber workers.worker')
+    .lean();
+
+  const carsByWorker = new Map();
+  cars.forEach((car) => {
+    (car.workers || []).forEach((entry) => {
+      const wid = String(entry?.worker?._id || entry?.worker || '');
+      if (!wid) return;
+      if (!carsByWorker.has(wid)) carsByWorker.set(wid, []);
+      carsByWorker.get(wid).push(car);
+    });
+  });
+
+  const result = new Map();
+  list.forEach((worker) => {
+    const wid = String(worker._id);
+    const assignedCars = carsByWorker.get(wid) || [];
+    const busyCars = assignedCars.filter((car) => BUSY_CAR_STATUSES.includes(car.status));
+    const pendingCars = assignedCars.filter((car) => car.status === 'pending');
+    const hasManualJob = hasActiveManualJob(worker);
+    const isBusy = hasManualJob || busyCars.length > 0;
+    result.set(wid, {
+      isBusy,
+      status: isBusy ? 'busy' : 'available',
+      hasManualJob,
+      busyCars,
+      pendingCars,
+      assignedCars,
+      busyCarsCount: busyCars.length,
+      pendingCarsCount: pendingCars.length,
+    });
+  });
+
+  return result;
+};
+
+/**
  * Kiểm tra thợ có đang bận thực tế không (xe + việc ghi tay), không chỉ dựa field status.
  */
 const isWorkerBusy = async (workerId, { excludeCarId = null } = {}) => {
@@ -185,10 +241,13 @@ module.exports = {
   getAssignedCarsForWorker,
   getOtherCarsForWorker,
   evaluateWorkerAvailability,
+  evaluateWorkersAvailabilityBatch,
   isWorkerBusy,
   syncWorkerStatus,
   syncWorkersStatus,
   syncWorkersForCar,
   extractWorkerIds,
   populateCarWorkers,
+  hasActiveManualJob,
+  hasBusyCarAssignment,
 };

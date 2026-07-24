@@ -176,6 +176,14 @@ const getAllCars = async (req, res) => {
       filter.location = req.query.location;
     }
 
+    if (req.query.statusFilter === 'not_delivered') {
+      filter.status = { $ne: 'delivered' };
+    } else if (req.query.statusFilter === 'delivered') {
+      filter.status = 'delivered';
+    } else if (req.query.status) {
+      filter.status = req.query.status;
+    }
+
     const ktvWorkerId = getKtvWorkerId(req.user);
     if (ktvWorkerId && req.query.mine === '1') {
       filter['workers.worker'] = ktvWorkerId;
@@ -210,6 +218,9 @@ const getCarById = async (req, res) => {
 
     res.json(car);
   } catch (error) {
+    if (error.name === 'CastError') {
+      return res.status(404).json({ message: 'Không tìm thấy xe' });
+    }
     res.status(500).json({ message: error.message });
   }
 };
@@ -820,17 +831,6 @@ const updateCarStatus = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-const getCarsByLocation = async (req, res) => {
-  const { locationId } = req.params;
-
-  try {
-    const cars = await findCarsForList({ location: locationId });
-
-    return res.status(200).json(cars);
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
 // Xóa xe
 const deleteCar = async (req, res) => {
   const { id } = req.params;
@@ -860,6 +860,7 @@ const deleteCar = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
 const getCarByPlateNumber = async (req, res) => {
   try {
     const { plateNumber } = req.params;
@@ -874,70 +875,6 @@ const getCarByPlateNumber = async (req, res) => {
     res.json(car);
   } catch (error) {
     res.status(500).json({ message: error.message });
-  }
-};
-
-const getCarStats = async (req, res) => {
-  try {
-    const statuses = [
-      'pending',
-      'working',
-      'done',
-      'waiting_wash',
-      'waiting_handover',
-      'delivered',
-      'additional_repair'
-    ];
-
-    const locations = await Location.find();
-
-    const [totalCounts, locationCounts] = await Promise.all([
-      Car.aggregate([
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ]),
-      Car.aggregate([
-        { $match: { location: { $ne: null } } },
-        { $group: { _id: { location: '$location', status: '$status' }, count: { $sum: 1 } } },
-      ]),
-    ]);
-
-    const totalCountMap = totalCounts.reduce((acc, row) => {
-      acc[row._id] = row.count;
-      return acc;
-    }, {});
-
-    const allLocation = statuses.reduce((acc, status) => {
-      acc[status] = totalCountMap[status] || 0;
-      return acc;
-    }, {});
-
-    const locationCountMap = locationCounts.reduce((acc, row) => {
-      const locationId = row._id.location?.toString();
-      if (!locationId) return acc;
-      if (!acc[locationId]) acc[locationId] = {};
-      acc[locationId][row._id.status] = row.count;
-      return acc;
-    }, {});
-
-    const byLocation = {};
-    for (const loc of locations) {
-      const locId = loc._id.toString();
-      byLocation[loc._id] = {
-        name: loc.name,
-        ...statuses.reduce((acc, status) => {
-          acc[status] = locationCountMap[locId]?.[status] || 0;
-          return acc;
-        }, {}),
-      };
-    }
-
-    return res.status(200).json({
-      allLocation,
-      byLocation
-    });
-  } catch (error) {
-    console.error('Lỗi khi thống kê xe:', error);
-    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -1975,9 +1912,7 @@ module.exports = {
   deleteCar,
   updateCarStatus,
   getCarByPlateNumber,
-  getCarStats,
   getWorkingAndPendingCars,
-  getCarsByLocation,
   getOverdueCars,
   getCarWorkersHistory,
   getCarRepairItems,

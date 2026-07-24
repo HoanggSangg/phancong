@@ -19,7 +19,7 @@ const {
   applyDeductionsToGross,
   getRevenueDeductions,
 } = require('../utils/revenueDeductions');
-const { evaluateWorkerAvailability, syncWorkerStatus } = require('../utils/workerStatus');
+const { evaluateWorkerAvailability, evaluateWorkersAvailabilityBatch, syncWorkerStatus } = require('../utils/workerStatus');
 
 const uploadImage = async (image) => {
   const result = await cloudinary.uploader.upload(image, {
@@ -56,20 +56,29 @@ const getAllWorkers = async (req, res) => {
       }]);
     }
 
-    const workers = await Worker.find().populate('team', 'name').sort({ createdAt: -1 });
-    const result = [];
+    const workers = await Worker.find()
+      .select('-revenues')
+      .populate('team', 'name')
+      .sort({ createdAt: -1 })
+      .lean();
 
-    for (const worker of workers) {
-      const availability = await evaluateWorkerAvailability(worker._id);
+    const availabilityMap = await evaluateWorkersAvailabilityBatch(workers);
 
-      result.push({
-        ...worker.toObject(),
+    const result = workers.map((worker) => {
+      const availability = availabilityMap.get(String(worker._id)) || {
+        busyCarsCount: 0,
+        pendingCarsCount: 0,
+        hasManualJob: false,
+      };
+
+      return {
+        ...worker,
         isBusy: worker.status === 'busy',
         busyCarsCount: availability.busyCarsCount,
         pendingCarsCount: availability.pendingCarsCount,
         hasManualJob: availability.hasManualJob,
-      });
-    }
+      };
+    });
 
     return res.status(200).json(result);
   } catch (error) {
@@ -92,6 +101,9 @@ const getWorkerById = async (req, res) => {
     }
     return res.status(200).json(worker);
   } catch (error) {
+    if (error.name === 'CastError') {
+      return res.status(404).json({ message: 'Thợ không tìm thấy' });
+    }
     return res.status(500).json({ message: error.message });
   }
 };
@@ -252,22 +264,28 @@ const deleteWorker = async (req, res) => {
 const getAvailableWorkers = async (req, res) => {
   try {
     const workers = await Worker.find({ status: 'available' })
+      .select('-revenues')
       .populate('team', 'name')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    const availableWorkers = [];
+    const availabilityMap = await evaluateWorkersAvailabilityBatch(workers);
 
-    for (const worker of workers) {
-      const availability = await evaluateWorkerAvailability(worker._id);
+    const availableWorkers = workers.map((worker) => {
+      const availability = availabilityMap.get(String(worker._id)) || {
+        busyCarsCount: 0,
+        pendingCarsCount: 0,
+        hasManualJob: false,
+      };
 
-      availableWorkers.push({
-        ...worker.toObject(),
+      return {
+        ...worker,
         isBusy: false,
         busyCarsCount: availability.busyCarsCount,
         pendingCarsCount: availability.pendingCarsCount,
         hasManualJob: availability.hasManualJob,
-      });
-    }
+      };
+    });
 
     return res.status(200).json(availableWorkers);
   } catch (error) {
@@ -276,32 +294,6 @@ const getAvailableWorkers = async (req, res) => {
 };
 
 // Thợ đang bận và xe đang làm
-const getBusyWorkersWithCars = async (req, res) => {
-  try {
-    const workers = await Worker.find({ status: 'busy' }).populate('team', 'name').sort({ createdAt: -1 });
-    const workersWithCars = [];
-
-    for (const worker of workers) {
-      const availability = await evaluateWorkerAvailability(worker._id);
-
-      workersWithCars.push({
-        worker: {
-          ...worker.toObject(),
-          isBusy: true,
-          busyCarsCount: availability.busyCarsCount,
-          pendingCarsCount: availability.pendingCarsCount,
-          hasManualJob: availability.hasManualJob,
-        },
-        cars: availability.busyCars,
-      });
-    }
-
-    return res.status(200).json(workersWithCars);
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-
 const getWorkerPerformance = async (req, res) => {
   try {
     const { workerId } = req.params;
@@ -460,15 +452,24 @@ const buildWorkerRevenueFromRepairItems = async (fromDate, toDate) => {
   await getRevenueDeductions();
 
   const workers = await Worker.find({ countRevenue: { $ne: false } })
-    .select('name soBaoDanh avatar team status countRevenue');
+    .select('name soBaoDanh avatar team status countRevenue')
+    .lean();
 
   const fromStr = moment(fromDate).format('YYYY-MM-DD');
   const toStr = moment(toDate).format('YYYY-MM-DD');
 
-  const items = await RepairOrderItem.find(REPAIR_ITEMS_WITH_WORKERS_QUERY).populate({
-    path: 'car',
-    select: 'currentDate workers workerLogs',
-  });
+  // Item có phân công → ngày DT = updatedAt (getItemRevenueDate). Lọc DB theo updatedAt
+  // rồi vẫn áp isDateInRange để giữ đúng timezone / biên ngày.
+  const items = await RepairOrderItem.find({
+    ...REPAIR_ITEMS_WITH_WORKERS_QUERY,
+    updatedAt: { $gte: fromDate, $lte: toDate },
+  })
+    .select('-raw -workerLogs')
+    .populate({
+      path: 'car',
+      select: 'currentDate workers',
+    })
+    .lean();
 
   const allWorkerIds = new Set();
   const processedItems = [];
@@ -510,11 +511,11 @@ const buildWorkerRevenueFromRepairItems = async (fromDate, toDate) => {
     }
   }
 
-  return workers.map(worker => {
-    const revenue = revenueMap.get(worker._id.toString()) || {
+  return workers.map((worker) => {
+    const revenue = revenueMap.get(String(worker._id)) || {
       totalGross: 0,
       totalRevenue: 0,
-      totalItems: 0
+      totalItems: 0,
     };
 
     return {
@@ -525,7 +526,7 @@ const buildWorkerRevenueFromRepairItems = async (fromDate, toDate) => {
       revenueBeforeCommission: revenue.totalGross,
       totalRevenue: revenue.totalRevenue,
       weeklyRevenue: revenue.totalRevenue,
-      totalItems: revenue.totalItems
+      totalItems: revenue.totalItems,
     };
   });
 };
@@ -814,10 +815,12 @@ const resolveWorkerScope = (req, queryWorkerId) => {
 
 const buildWorkerKpi = async (workerId, from, to) => {
   const deductions = await getRevenueDeductions();
+  const { fromDate, toDate } = toDateBounds(from, to);
 
   const worker = await Worker.findById(workerId)
     .select('name soBaoDanh avatar countRevenue team')
-    .populate('team', 'name');
+    .populate('team', 'name')
+    .lean();
   if (!worker) return null;
 
   const workerKey = workerId.toString();
@@ -829,10 +832,14 @@ const buildWorkerKpi = async (workerId, from, to) => {
       { 'workerAssignments.worker': workerId },
       { 'workerRevenues.worker': workerId },
     ],
-  }).populate({
-    path: 'car',
-    select: 'plateNumber status isLate currentDate',
-  });
+    updatedAt: { $gte: fromDate, $lte: toDate },
+  })
+    .select('-raw')
+    .populate({
+      path: 'car',
+      select: 'plateNumber status isLate currentDate',
+    })
+    .lean();
 
   const filteredItems = repairItems.filter((item) => {
     const revenueDate = getItemRevenueDate(item, item.car);
@@ -937,42 +944,6 @@ const getWorkerKpi = async (req, res) => {
   }
 };
 
-const getAllWorkersKpi = async (req, res) => {
-  try {
-    if (req.user.role === 'ktv') {
-      return res.status(403).json({ message: 'KTV chỉ xem KPI của mình' });
-    }
-
-    const { period, from, to } = req.query;
-    const range = resolveDateRange(period, from, to);
-
-    const workers = await Worker.find().select('name soBaoDanh avatar countRevenue team').populate('team', 'name');
-    const data = await Promise.all(
-      workers.map((worker) => buildWorkerKpi(worker._id, range.from, range.to))
-    );
-
-    const sorted = data
-      .filter(Boolean)
-      .sort((a, b) => b.revenueAfterCommission - a.revenueAfterCommission);
-
-    const deductions = await getRevenueDeductions();
-
-    return res.status(200).json({
-      success: true,
-      period: period || 'custom',
-      range,
-      deductions,
-      data: sorted,
-    });
-  } catch (error) {
-    console.error('Lỗi lấy KPI tất cả thợ:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Lỗi lấy KPI tất cả thợ',
-    });
-  }
-};
-
 module.exports = {
   getAllWorkers,
   getWorkerById,
@@ -980,7 +951,6 @@ module.exports = {
   updateWorker,
   deleteWorker,
   getAvailableWorkers,
-  getBusyWorkersWithCars,
   getWorkerPerformance,
   getWorkerDailyPerformancePercentage,
   getWorkerRevenueChart,
@@ -990,5 +960,5 @@ module.exports = {
   bulkImportWorkers,
   toggleWorkerCountRevenue,
   getWorkerKpi,
-  getAllWorkersKpi,
+  buildWorkerRevenueFromRepairItems,
 };

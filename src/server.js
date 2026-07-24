@@ -14,7 +14,11 @@ const externalRoutes = require('./routes/externalRoutes');
 const auditLogRoutes = require('./routes/auditLogRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const ktvMessageRoutes = require('./routes/ktvMessageRoutes');
+const payrollRoutes = require('./routes/payrollRoutes');
+const attendanceRoutes = require('./routes/attendanceRoutes');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
+const { initSalarySettings } = require('./utils/salarySettings');
+const { initAttendanceSettings } = require('./utils/attendanceSettings');
 const { trimAllCollections, getTrimSummary } = require('./utils/trimCollections');
 const {
   cleanupExpiredManualJobs,
@@ -176,6 +180,8 @@ app.use('/api/teams', teamRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/ktv-messages', ktvMessageRoutes);
+app.use('/api/payroll', payrollRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 app.get('/', (req, res) => {
   res.status(200).send('🚀 Bá Thành backend is running.');
@@ -198,6 +204,8 @@ mongoose
     console.log('✅ Kết nối MongoDB thành công');
 
     await initRevenueDeductions();
+    await initSalarySettings();
+    await initAttendanceSettings();
     await startCollectionTrim();
     startManualJobCleanup();
 

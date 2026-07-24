@@ -8,6 +8,7 @@ const {
   getItemRevenueDate,
   getItemWorkerAssignments,
   getRevenueForWorkerFromItem,
+  toDateBounds,
 } = require('../utils/revenue');
 const {
   applyDeductionsToGross,
@@ -22,8 +23,12 @@ const ACTIVE_CAR_STATUSES = ['pending', 'working', 'done', 'waiting_wash', 'wait
 
 const aggregateRevenueInRange = async (from, to) => {
   const deductions = await getRevenueDeductions();
+  const { fromDate, toDate } = toDateBounds(from, to);
 
-  const workers = await Worker.find().select('name soBaoDanh team countRevenue').populate('team', 'name');
+  const workers = await Worker.find()
+    .select('name soBaoDanh team countRevenue')
+    .populate('team', 'name')
+    .lean();
   const countRevenueMap = await buildCountRevenueMap(workers.map((worker) => worker._id));
 
   const repairItems = await RepairOrderItem.find({
@@ -32,10 +37,14 @@ const aggregateRevenueInRange = async (from, to) => {
       { 'workerAssignments.worker': { $exists: true } },
       { 'workerRevenues.worker': { $exists: true } },
     ],
-  }).populate({
-    path: 'car',
-    select: 'plateNumber status isLate currentDate',
-  });
+    updatedAt: { $gte: fromDate, $lte: toDate },
+  })
+    .select('-raw')
+    .populate({
+      path: 'car',
+      select: 'plateNumber status isLate currentDate',
+    })
+    .lean();
 
   const filteredItems = repairItems.filter((item) => {
     const revenueDate = getItemRevenueDate(item, item.car);

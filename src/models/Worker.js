@@ -64,6 +64,13 @@ const workerSchema = new Schema({
     default: null
   },
 
+  /** Chức vụ trong tổ: chỉ 1 TT / tổ */
+  teamRole: {
+    type: String,
+    enum: ['KTV', 'TT'],
+    default: 'KTV',
+  },
+
   manualJobs: {
     type: [manualJobSchema],
     default: []
@@ -83,9 +90,22 @@ const workerSchema = new Schema({
   countRevenue: {
     type: Boolean,
     default: true
-  }
+  },
+
+  salaryProfile: {
+    boPhan: { type: String, default: '', trim: true },
+    chucVu: { type: String, default: '', trim: true },
+    luongCoBan: { type: Number, default: 0, min: 0 },
+    doanhThuDinhMuc: { type: Number, default: 0, min: 0 },
+    tyLeDatDinhMuc: { type: Number, default: null },
+    tyLeVuotDinhMuc: { type: Number, default: null },
+    thamGiaBaoHiem: { type: Boolean, default: false },
+    mucLuongDongBaoHiem: { type: Number, default: 0, min: 0 },
+  },
 }, { timestamps: true });
 
 workerSchema.index({ status: 1 });
+workerSchema.index({ team: 1 });
+workerSchema.index({ team: 1, teamRole: 1 });
 
 module.exports = mongoose.model('Worker', workerSchema);

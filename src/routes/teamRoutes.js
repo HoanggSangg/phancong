@@ -10,6 +10,7 @@ const {
   deleteTeam,
   addWorkerToTeam,
   removeWorkerFromTeam,
+  updateWorkerTeamRole,
 } = require('../controllers/teamController');
 
 router.use(authenticate);
@@ -20,6 +21,11 @@ router.post('/', access(['admin'], 'system.locations'), createTeam);
 router.put('/:teamId', access(['admin'], 'system.locations'), updateTeam);
 router.delete('/:teamId', access(['admin'], 'system.locations'), deleteTeam);
 router.post('/:teamId/workers', access(['admin'], 'system.locations'), addWorkerToTeam);
+router.patch(
+  '/:teamId/workers/:workerId/role',
+  access(['admin'], 'system.locations'),
+  updateWorkerTeamRole
+);
 router.delete('/:teamId/workers/:workerId', access(['admin'], 'system.locations'), removeWorkerFromTeam);
 
 module.exports = router;
