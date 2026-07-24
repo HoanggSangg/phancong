@@ -457,6 +457,8 @@ const getWorkerDailyPerformancePercentage = async (req, res) => {
 const getRevenueDateRange = (from, to) => toDateBounds(from, to);
 
 const buildWorkerRevenueFromRepairItems = async (fromDate, toDate) => {
+  await getRevenueDeductions();
+
   const workers = await Worker.find({ countRevenue: { $ne: false } })
     .select('name soBaoDanh avatar team status countRevenue');
 
@@ -811,6 +813,8 @@ const resolveWorkerScope = (req, queryWorkerId) => {
 };
 
 const buildWorkerKpi = async (workerId, from, to) => {
+  const deductions = await getRevenueDeductions();
+
   const worker = await Worker.findById(workerId)
     .select('name soBaoDanh avatar countRevenue team')
     .populate('team', 'name');
@@ -856,7 +860,7 @@ const buildWorkerKpi = async (workerId, from, to) => {
     }
   });
 
-  const revenueBreakdown = applyDeductionsToGross(revenueBeforeCommission, await getRevenueDeductions());
+  const revenueBreakdown = applyDeductionsToGross(revenueBeforeCommission, deductions);
 
   const allCarsInRange = await Car.find({
     currentDate: { $gte: from, $lte: to },
@@ -883,7 +887,7 @@ const buildWorkerKpi = async (workerId, from, to) => {
     deductionBreakdown: revenueBreakdown.deductions,
     totalDeductionRate: revenueBreakdown.totalDeductionRate,
     carsOnTime: completedCars.filter((car) => !car.isLate).length,
-    carsLate: allCars.filter((car) => car.isLate).length,
+    carsLate: completedCars.filter((car) => car.isLate).length,
     performancePercentage,
     totalCarsInRange: allCarsInRange.length,
     totalWork,

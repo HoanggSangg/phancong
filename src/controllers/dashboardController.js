@@ -12,14 +12,17 @@ const {
 const {
   applyDeductionsToGross,
   getRevenueDeductions,
-  saveRevenueDeductions,
-  normalizeDeductions,
+  saveRevenueSettings,
+  getCachedDeductions,
+  getCachedRevenueBase,
 } = require('../utils/revenueDeductions');
 const { buildCountRevenueMap } = require('../utils/revenueHelpers');
 
 const ACTIVE_CAR_STATUSES = ['pending', 'working', 'done', 'waiting_wash', 'waiting_handover', 'additional_repair'];
 
 const aggregateRevenueInRange = async (from, to) => {
+  const deductions = await getRevenueDeductions();
+
   const workers = await Worker.find().select('name soBaoDanh team countRevenue').populate('team', 'name');
   const countRevenueMap = await buildCountRevenueMap(workers.map((worker) => worker._id));
 
@@ -67,7 +70,6 @@ const aggregateRevenueInRange = async (from, to) => {
     });
   });
 
-  const deductions = await getRevenueDeductions();
   const overview = applyDeductionsToGross(totalGross, deductions);
 
   const byTeam = [...teamGrossMap.entries()]
@@ -100,6 +102,7 @@ const aggregateRevenueInRange = async (from, to) => {
 
   return {
     deductions,
+    revenueBase: getCachedRevenueBase(),
     overview,
     byTeam,
     topWorkers,
@@ -132,6 +135,7 @@ const getDashboardOverview = async (req, res) => {
       period: period || 'custom',
       range,
       deductions: revenue.deductions,
+      revenueBase: revenue.revenueBase,
       summary: {
         totalWorkers,
         availableWorkers,
@@ -159,8 +163,12 @@ const getDashboardOverview = async (req, res) => {
 
 const getRevenueSettings = async (req, res) => {
   try {
-    const deductions = await getRevenueDeductions();
-    return res.status(200).json({ success: true, deductions });
+    await getRevenueDeductions();
+    return res.status(200).json({
+      success: true,
+      deductions: getCachedDeductions(),
+      revenueBase: getCachedRevenueBase(),
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -168,11 +176,15 @@ const getRevenueSettings = async (req, res) => {
 
 const updateRevenueSettings = async (req, res) => {
   try {
-    const deductions = await saveRevenueDeductions(req.body?.deductions || []);
+    const result = await saveRevenueSettings({
+      deductions: req.body?.deductions,
+      revenueBase: req.body?.revenueBase,
+    });
     return res.status(200).json({
       success: true,
-      message: 'Đã cập nhật cấu hình trừ doanh thu',
-      deductions,
+      message: 'Đã cập nhật cấu hình doanh thu',
+      deductions: result.deductions,
+      revenueBase: result.revenueBase,
     });
   } catch (error) {
     return res.status(400).json({ success: false, message: error.message });

@@ -70,6 +70,16 @@ const repairOrderItemSchema = new Schema({
     default: 0,
   },
 
+  unitCostPrice: {
+    type: Number,
+    default: 0,
+  },
+
+  costAmount: {
+    type: Number,
+    default: 0,
+  },
+
   amount: {
     type: Number,
     default: 0,

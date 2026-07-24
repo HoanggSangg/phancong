@@ -1,7 +1,10 @@
 const moment = require('moment-timezone');
-const { applyDeductionsToGross, getCachedDeductions } = require('./revenueDeductions');
+const {
+  applyDeductionsToGross,
+  getCachedDeductions,
+  getCachedRevenueBase,
+} = require('./revenueDeductions');
 
-const COMMISSION_RATE = 0.75;
 const TIMEZONE = 'Asia/Ho_Chi_Minh';
 
 const resolveDateRange = (period, from, to) => {
@@ -61,6 +64,19 @@ const getItemRevenueDate = (item, car = null) => {
       : '');
 };
 
+const getItemRevenueBaseAmount = (item = {}) => {
+  if (getCachedRevenueBase() === 'cost') {
+    const costAmount = Number(item.costAmount ?? 0);
+    if (costAmount > 0) return costAmount;
+
+    const unitCostPrice = Number(item.unitCostPrice ?? item.raw?.giaVon ?? 0);
+    const quantity = Number(item.quantity ?? item.raw?.soLuong ?? 1) || 1;
+    return Math.round(unitCostPrice * quantity);
+  }
+
+  return Number(item.amount || 0);
+};
+
 const calculateRevenueShare = (amount, percentage, countRevenue = true) => {
   const gross = Math.round(Number(amount || 0) * (Number(percentage || 0) / 100));
   if (!countRevenue) {
@@ -95,7 +111,7 @@ const getItemWorkerAssignments = (item) => {
 
 const buildWorkerRevenuesForItem = (item, countRevenueMap = new Map(), car = null) => {
   const assignments = getItemWorkerAssignments(item, car);
-  const amount = Number(item.amount || 0);
+  const amount = getItemRevenueBaseAmount(item);
 
   return assignments.map((assignment) => {
     const workerKey = String(assignment.workerId);
@@ -116,44 +132,18 @@ const buildWorkerRevenuesForItem = (item, countRevenueMap = new Map(), car = nul
   });
 };
 
-const getStoredRevenuesForWorker = (item, workerId) => {
-  if (Array.isArray(item.workerRevenues) && item.workerRevenues.length > 0) {
-    const entry = item.workerRevenues.find(
-      (row) => String(row.worker) === String(workerId)
-    );
-    if (entry) {
-      return {
-        grossRevenue: Number(entry.grossRevenue || 0),
-        netRevenue: Number(entry.netRevenue || 0),
-        percentage: entry.percentage ?? 100,
-        workerName: entry.workerName || '',
-      };
-    }
-  }
-
-  return null;
-};
-
 const getRevenueForWorkerFromItem = (item, workerId, countRevenueMap = new Map(), car = null) => {
-  const stored = getStoredRevenuesForWorker(item, workerId);
-  if (stored) {
-    const { netRevenue } = applyDeductionsToGross(stored.grossRevenue, getCachedDeductions());
-    return {
-      ...stored,
-      netRevenue,
-    };
-  }
-
   const assignment = getItemWorkerAssignments(item, car).find(
-    (row) => String(row.workerId) === String(workerId)
+    (row) => String(row.workerId) === String(workerId),
   );
   if (!assignment) return null;
 
   const shouldCount = countRevenueMap.get(String(workerId)) !== false;
+  const baseAmount = getItemRevenueBaseAmount(item);
   const { grossRevenue, netRevenue } = calculateRevenueShare(
-    item.amount,
+    baseAmount,
     assignment.percentage,
-    shouldCount
+    shouldCount,
   );
 
   return {
@@ -165,16 +155,15 @@ const getRevenueForWorkerFromItem = (item, workerId, countRevenueMap = new Map()
 };
 
 module.exports = {
-  COMMISSION_RATE,
   TIMEZONE,
   resolveDateRange,
   toDateBounds,
   isDateInRange,
   hasItemWorkerAssignment,
   getItemRevenueDate,
+  getItemRevenueBaseAmount,
   calculateRevenueShare,
   getItemWorkerAssignments,
   buildWorkerRevenuesForItem,
-  getStoredRevenuesForWorker,
   getRevenueForWorkerFromItem,
 };

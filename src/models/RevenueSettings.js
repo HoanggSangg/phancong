@@ -36,6 +36,11 @@ const revenueSettingsSchema = new mongoose.Schema({
       { key: 'related_cost', label: 'Chi phí liên quan', rate: 0, enabled: false },
     ]),
   },
+  revenueBase: {
+    type: String,
+    enum: ['amount', 'cost'],
+    default: 'amount',
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.model('RevenueSettings', revenueSettingsSchema);

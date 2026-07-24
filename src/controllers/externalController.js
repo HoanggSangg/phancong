@@ -143,16 +143,36 @@ const lookupCarOrRO = async (req, res) => {
   }
 };
 
+const fetchQuoteByKey = async (plate, ro) => {
+  const candidates = [];
+  if (ro.startsWith('RO') || ro.startsWith('TT')) {
+    candidates.push(ro);
+  } else if (ro) {
+    candidates.push(`RO${ro}`, ro);
+  }
+
+  for (const key of candidates) {
+    try {
+      if (key.startsWith('TT')) {
+        const res = await axios.get(`${EXTERNAL_BASE}/baogia/${key}`, { headers });
+        return res.data;
+      }
+      const res = await axios.get(`${EXTERNAL_BASE}/xe/${plate}/${key}`, { headers });
+      return res.data;
+    } catch {
+      // thử token RO tiếp theo
+    }
+  }
+
+  return null;
+};
+
 const fetchRepairDetailsForCar = async (plateNumber, roCode = '') => {
   const plate = normalizePlate(plateNumber);
   const ro = String(roCode || '').trim().toUpperCase();
 
-  let baogiaGanNhat = null;
-
-  if (ro.startsWith('RO')) {
-    const roRes = await axios.get(`${EXTERNAL_BASE}/xe/${plate}/${ro}`, { headers });
-    baogiaGanNhat = roRes.data;
-  } else {
+  let baogiaGanNhat = ro ? await fetchQuoteByKey(plate, ro) : null;
+  if (!baogiaGanNhat) {
     baogiaGanNhat = await fetchLatestQuote(plate);
   }
 
@@ -164,4 +184,5 @@ const fetchRepairDetailsForCar = async (plateNumber, roCode = '') => {
 module.exports = {
   lookupCarOrRO,
   fetchRepairDetailsForCar,
+  fetchVehicleInfo,
 };

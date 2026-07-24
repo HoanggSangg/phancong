@@ -3,7 +3,7 @@ const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
 const RepairOrderItem = require('../models/RepairOrderItem');
 const Location = require('../models/Location');
-const { fetchRepairDetailsForCar } = require('./externalController');
+const { fetchRepairDetailsForCar, fetchVehicleInfo } = require('./externalController');
 const moment = require('moment-timezone');
 const {
   isDateInRange,
@@ -17,6 +17,10 @@ const {
   buildCountRevenueMap,
   resolveRepairHistoryWorkerFilter,
 } = require('../utils/revenueHelpers');
+const {
+  getRevenueDeductions,
+  getCachedRevenueBase,
+} = require('../utils/revenueDeductions');
 const {
   isWorkerBusy,
   syncWorkerStatus,
@@ -33,6 +37,8 @@ const {
   buildDuplicateROFilter,
   getROLookupTokens,
 } = require('../utils/roKey');
+const { resolveExternalItemCost, enrichRepairItemCost } = require('../utils/repairItemCost');
+const { extractExternalCarFields } = require('../utils/externalCarData');
 
 const CAR_STATUS_LABELS = {
   pending: 'Chờ sửa',
@@ -135,27 +141,32 @@ const getManageCarsList = async (req, res) => {
   }
 };
 
-const mapExternalItemToRepairOrder = (item, car) => ({
-  car: car._id,
-  plateNumber: car.plateNumber,
-  roCode: car.roCode || '',
-  roNumber: car.roNumber || '',
-  groupName: item.khoanMucSuaChua || 'Khác',
-  content: item.noiDung || '',
-  quantity: item.soLuong || 1,
-  unit: item.donViTinh || '',
-  unitPrice: item.donGia || 0,
-  amount: item.thanhTien || 0,
-  taxRate: item.tyLeThue || 0,
-  taxAmount: item.tienThue || 0,
-  discountRate: item.tyLeChietKhau || 0,
-  discountAmount: item.tienChietKhau || 0,
-  serviceType: item.loaiDichVu || '',
-  itemType: item.loai || 0,
-  externalItemId: item.khoa || '',
-  raw: item,
-});
+const mapExternalItemToRepairOrder = (item, car) => {
+  const { unitCostPrice, costAmount } = resolveExternalItemCost(item);
 
+  return {
+    car: car._id,
+    plateNumber: car.plateNumber,
+    roCode: car.roCode || '',
+    roNumber: car.roNumber || '',
+    groupName: item.khoanMucSuaChua || 'Khác',
+    content: item.noiDung || '',
+    quantity: item.soLuong || 1,
+    unit: item.donViTinh || '',
+    unitPrice: item.donGia || 0,
+    unitCostPrice,
+    costAmount,
+    amount: item.thanhTien || 0,
+    taxRate: item.tyLeThue || 0,
+    taxAmount: item.tienThue || 0,
+    discountRate: item.tyLeChietKhau || 0,
+    discountAmount: item.tienChietKhau || 0,
+    serviceType: item.loaiDichVu || '',
+    itemType: item.loai || 0,
+    externalItemId: item.khoa || '',
+    raw: item,
+  };
+};
 
 // Lấy tất cả xe
 const getAllCars = async (req, res) => {
@@ -177,7 +188,6 @@ const getAllCars = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 // Lấy xe theo ID
 const getCarById = async (req, res) => {
@@ -203,8 +213,6 @@ const getCarById = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-
 
 const createCar = async (req, res) => {
   try {
@@ -345,6 +353,15 @@ const createCar = async (req, res) => {
           quantity: Number(item.quantity || 1),
           unit: item.unit || '',
           unitPrice: Number(item.unitPrice || 0),
+          unitCostPrice: Number(item.unitCostPrice ?? item.raw?.giaVon ?? 0) || 0,
+          costAmount: Number(
+            item.costAmount
+            ?? resolveExternalItemCost({
+              giaVon: item.unitCostPrice ?? item.raw?.giaVon,
+              soLuong: item.quantity ?? item.raw?.soLuong,
+            }).costAmount
+            ?? 0
+          ),
           amount: Number(item.amount || 0),
           taxRate: Number(item.taxRate || 0),
           taxAmount: Number(item.taxAmount || 0),
@@ -370,7 +387,6 @@ const createCar = async (req, res) => {
     return res.status(400).json({ message: error.message });
   }
 };
-
 
 // Cập nhật thông tin xe+++
 const updateCar = async (req, res) => {
@@ -504,7 +520,6 @@ const updateCar = async (req, res) => {
     res.status(500).json({ message: 'Lỗi server', error: error.message });
   }
 };
-
 
 const updateCarStatus = async (req, res) => {
   const { id } = req.params;
@@ -962,7 +977,6 @@ const getWorkingAndPendingCars = async (req, res) => {
   }
 };
 
-
 const parseDeliveryDate = (deliveryTime) => {
   if (!deliveryTime || typeof deliveryTime !== 'string') return null;
 
@@ -999,7 +1013,6 @@ const getOverdueCars = async (req, res) => {
     return res.status(500).json({ message: err.message || 'Không tải được danh sách xe trễ hẹn' });
   }
 };
-
 
 // API để lấy lịch sử thợ của xe (nếu có lưu lịch sử thay đổi thợ)
 const getCarWorkersHistory = async (req, res) => {
@@ -1191,6 +1204,8 @@ const getCarWorkersHistory = async (req, res) => {
 
 const getRepairHistory = async (req, res) => {
   try {
+    await getRevenueDeductions();
+
     const { date, from, to, workerId: queryWorkerId } = req.query;
 
     const workerScope = resolveRepairHistoryWorkerFilter(req, queryWorkerId);
@@ -1269,6 +1284,8 @@ const getRepairHistory = async (req, res) => {
         content: item.content || '',
         quantity: item.quantity || 0,
         unitPrice: item.unitPrice || 0,
+        unitCostPrice: item.unitCostPrice || 0,
+        costAmount: Number(item.costAmount || 0),
         amount: Number(item.amount || 0),
         assignments: visibleAssignments,
         allAssignments: req.user.role === 'ktv' ? undefined : mappedAssignments,
@@ -1303,6 +1320,7 @@ const getRepairHistory = async (req, res) => {
 
     const baseResponse = {
       ...summary,
+      revenueBase: getCachedRevenueBase(),
       items: responseItems,
     };
 
@@ -1371,7 +1389,7 @@ const getCarRepairItems = async (req, res) => {
       }
     }
 
-    return res.json(items);
+    return res.json(items.map(enrichRepairItemCost));
   } catch (error) {
     console.error('Lỗi lấy chi tiết sửa chữa:', error);
     return res.status(500).json({
@@ -1441,11 +1459,13 @@ const isManualRepairItemChanged = (existingItem, payload, workerEntries) => {
     || Number(existingItem.quantity) !== Number(payload.quantity)
     || Number(existingItem.unitPrice) !== Number(payload.unitPrice)
     || Number(existingItem.amount) !== Number(payload.amount)
+    || Number(existingItem.unitCostPrice || 0) !== Number(payload.unitCostPrice || 0)
+    || Number(existingItem.costAmount || 0) !== Number(payload.costAmount || 0)
     || String(existingItem.unit || '') !== String(payload.unit || '')
     || !areWorkerAssignmentsEqual(oldWorkers, workerEntries);
 };
 
-const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, itemAmount) => {
+const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, item) => {
   const workerAssignments = [];
 
   for (const entry of workerEntries) {
@@ -1467,7 +1487,7 @@ const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, itemA
 
   const workerRevenues = workerAssignments.length > 0
     ? buildWorkerRevenuesForItem(
-      { amount: itemAmount, workerAssignments },
+      { ...item, workerAssignments },
       countRevenueMap
     )
     : [];
@@ -1480,14 +1500,19 @@ const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, itemA
   };
 };
 
-const fetchRepairItemsForCar = async (carId) =>
-  RepairOrderItem.find({ car: carId })
+const fetchRepairItemsForCar = async (carId) => {
+  const items = await RepairOrderItem.find({ car: carId })
     .populate('workerAssignments.worker', 'name')
     .populate('worker', 'name')
     .sort({ isManual: 1, groupName: 1, createdAt: 1 });
 
+  return items.map(enrichRepairItemCost);
+};
+
 const assignRepairItemWorkers = async (req, res) => {
   try {
+    await getRevenueDeductions();
+
     const { id } = req.params;
     const assignments = Array.isArray(req.body.assignments) ? req.body.assignments : [];
 
@@ -1559,7 +1584,7 @@ const assignRepairItemWorkers = async (req, res) => {
       const workerUpdate = await buildWorkerAssignmentUpdate(
         workerEntries,
         countRevenueMap,
-        existingItem.amount
+        existingItem
       );
 
       await RepairOrderItem.findOneAndUpdate(
@@ -1585,6 +1610,8 @@ const assignRepairItemWorkers = async (req, res) => {
 
 const saveManualRepairItems = async (req, res) => {
   try {
+    await getRevenueDeductions();
+
     const { id } = req.params;
     const manualItems = Array.isArray(req.body.items) ? req.body.items : [];
 
@@ -1627,6 +1654,10 @@ const saveManualRepairItems = async (req, res) => {
       const amount = item.amount != null
         ? Math.max(Number(item.amount) || 0, 0)
         : Math.round(quantity * unitPrice);
+      const unitCostPrice = Math.max(Number(item.unitCostPrice) || 0, 0);
+      const costAmount = item.costAmount != null
+        ? Math.max(Number(item.costAmount) || 0, 0)
+        : Math.round(quantity * unitCostPrice);
 
       const workerEntries = normalizeAssignmentWorkers({ workers: item.workers });
 
@@ -1646,7 +1677,13 @@ const saveManualRepairItems = async (req, res) => {
       const workerUpdate = await buildWorkerAssignmentUpdate(
         workerEntries,
         countRevenueMap,
-        amount
+        {
+          amount,
+          costAmount,
+          unitCostPrice,
+          quantity,
+          raw: null,
+        }
       );
 
       const payload = {
@@ -1655,6 +1692,8 @@ const saveManualRepairItems = async (req, res) => {
         quantity,
         unitPrice,
         amount,
+        unitCostPrice,
+        costAmount,
         unit: String(item.unit || '').trim(),
         isManual: true,
         ...workerUpdate,
@@ -1797,6 +1836,136 @@ const notifyAdminAboutCar = async (req, res) => {
   });
 };
 
+const syncRepairItemsFromChiTiet = async (car, chiTiet = []) => {
+  const existingApiItems = await RepairOrderItem.find({
+    car: car._id,
+    isManual: false,
+  });
+
+  const existingByKey = new Map(
+    existingApiItems.map((item) => [item.externalItemId || String(item._id), item]),
+  );
+
+  const incomingKeys = new Set();
+  let created = 0;
+  let updated = 0;
+
+  for (const rawItem of chiTiet) {
+    const mapped = mapExternalItemToRepairOrder(rawItem, car);
+    const key = mapped.externalItemId || '';
+    if (!key) continue;
+
+    incomingKeys.add(key);
+    const existing = existingByKey.get(key);
+
+    if (existing) {
+      await RepairOrderItem.findByIdAndUpdate(existing._id, {
+        plateNumber: mapped.plateNumber,
+        roCode: mapped.roCode,
+        roNumber: mapped.roNumber,
+        groupName: mapped.groupName,
+        content: mapped.content,
+        quantity: mapped.quantity,
+        unit: mapped.unit,
+        unitPrice: mapped.unitPrice,
+        unitCostPrice: mapped.unitCostPrice,
+        costAmount: mapped.costAmount,
+        amount: mapped.amount,
+        taxRate: mapped.taxRate,
+        taxAmount: mapped.taxAmount,
+        discountRate: mapped.discountRate,
+        discountAmount: mapped.discountAmount,
+        serviceType: mapped.serviceType,
+        itemType: mapped.itemType,
+        raw: mapped.raw,
+      });
+      updated += 1;
+    } else {
+      await RepairOrderItem.create(mapped);
+      created += 1;
+    }
+  }
+
+  let removed = 0;
+  for (const [key, item] of existingByKey) {
+    if (!item.externalItemId) continue;
+    if (!incomingKeys.has(key)) {
+      await RepairOrderItem.findByIdAndDelete(item._id);
+      removed += 1;
+    }
+  }
+
+  return { created, updated, removed, total: chiTiet.length };
+};
+
+const syncCarFromExternal = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const car = await Car.findById(id);
+
+    if (!car) {
+      return res.status(404).json({ message: 'Không tìm thấy xe' });
+    }
+
+    const roKeyword = car.roCode || car.roNumber || '';
+    if (!roKeyword) {
+      return res.status(400).json({ message: 'Xe chưa có RO để tra cứu API' });
+    }
+
+    const { chiTiet, baogiaGanNhat } = await fetchRepairDetailsForCar(
+      car.plateNumber,
+      roKeyword,
+    );
+
+    if (!baogiaGanNhat && chiTiet.length === 0) {
+      return res.status(404).json({
+        message: 'Không lấy được dữ liệu từ API cho biển số và RO này',
+      });
+    }
+
+    let vehicle = null;
+    try {
+      vehicle = await fetchVehicleInfo(car.plateNumber);
+    } catch {
+      vehicle = null;
+    }
+
+    const externalFields = extractExternalCarFields({ baogiaGanNhat, vehicle });
+
+    if (externalFields.externalCarTypeName) {
+      car.externalCarTypeName = externalFields.externalCarTypeName;
+    }
+    if (externalFields.advisorName) {
+      car.advisorName = externalFields.advisorName;
+    }
+    if (externalFields.deliveryTime) {
+      car.deliveryTime = externalFields.deliveryTime;
+    }
+
+    await car.save();
+
+    const repairSync = chiTiet.length > 0
+      ? await syncRepairItemsFromChiTiet(car, chiTiet)
+      : { created: 0, updated: 0, removed: 0, total: 0 };
+
+    const populatedCar = await Car.findById(id)
+      .populate('workers.worker', 'name')
+      .populate('supervisor', 'name')
+      .populate('location', 'name');
+
+    return res.json({
+      message: 'Đã tải lại dữ liệu từ API',
+      car: populatedCar,
+      repairSync,
+    });
+  } catch (error) {
+    console.error('Lỗi đồng bộ xe từ API:', error);
+    return res.status(500).json({
+      message: error.response?.data?.message || error.message || 'Không tải được dữ liệu API',
+    });
+  }
+};
+
 module.exports = {
   getAllCars,
   getManageCarsList,
@@ -1816,4 +1985,5 @@ module.exports = {
   saveManualRepairItems,
   getRepairHistory,
   notifyAdminAboutCar,
+  syncCarFromExternal,
 };

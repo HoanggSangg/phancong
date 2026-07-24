@@ -16,7 +16,11 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const ktvMessageRoutes = require('./routes/ktvMessageRoutes');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
 const { trimAllCollections, getTrimSummary } = require('./utils/trimCollections');
-const { cleanupExpiredManualJobs } = require('./utils/manualJobCleanup');
+const {
+  cleanupExpiredManualJobs,
+  scheduleDailyManualJobCleanup,
+  getCleanupHour,
+} = require('./utils/manualJobCleanup');
 
 const formatDate = (value) => {
   if (!value) return '—';
@@ -74,39 +78,27 @@ const logTrimResults = (results, summary) => {
   }
 };
 
-const startManualJobCleanup = async () => {
-  const intervalMs = Math.max(
-    60_000,
-    parseInt(process.env.MANUAL_JOB_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10),
-  );
+const startManualJobCleanup = () => {
   const enabled = process.env.AUTO_CLEANUP_MANUAL_JOBS !== 'false';
-
-  const runCleanup = async () => {
-    const result = await cleanupExpiredManualJobs();
-    if (result.deletedCount > 0) {
-      console.log(
-        `🧹 Việc ghi tay quá hạn: xóa ${result.deletedCount} việc, `
-        + `cập nhật trạng thái ${result.workersUpdated} thợ`,
-      );
-    }
-    return result;
-  };
-
   if (!enabled) return;
 
-  try {
-    await runCleanup();
-  } catch (err) {
-    console.error('❌ Lỗi dọn việc ghi tay quá hạn:', err.message);
-  }
+  const runCleanup = async () => {
+    try {
+      const result = await cleanupExpiredManualJobs();
+      if (result.deletedCount > 0) {
+        console.log(
+          `🧹 Dọn việc ghi tay (12:00 VN): xóa ${result.deletedCount} việc, `
+          + `cập nhật ${result.workersUpdated} thợ`,
+        );
+      }
+    } catch (err) {
+      console.error('❌ Lỗi dọn việc ghi tay:', err.message);
+    }
+  };
 
-  setInterval(() => {
-    runCleanup().catch((err) => {
-      console.error('❌ Lỗi dọn việc ghi tay quá hạn:', err.message);
-    });
-  }, intervalMs);
-
-  console.log(`🔄 Auto-dọn việc ghi tay quá hạn: mỗi ${Math.round(intervalMs / 60000)} phút`);
+  const nextRun = scheduleDailyManualJobCleanup(runCleanup);
+  const hour = getCleanupHour();
+  console.log(`🔄 Dọn việc ghi tay: lập lịch ${hour}:00 hàng ngày (VN), lần chạy tiếp: ${nextRun}`);
 };
 
 const startCollectionTrim = async () => {
@@ -207,7 +199,7 @@ mongoose
 
     await initRevenueDeductions();
     await startCollectionTrim();
-    await startManualJobCleanup();
+    startManualJobCleanup();
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server is running on http://localhost:${PORT}`);

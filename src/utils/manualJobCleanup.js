@@ -2,18 +2,26 @@ const moment = require('moment-timezone');
 const Worker = require('../models/Worker');
 const { syncWorkerStatus } = require('./workerStatus');
 
-const getTodayStartVN = () =>
-  moment().tz('Asia/Ho_Chi_Minh').startOf('day').toDate();
+const TIMEZONE = 'Asia/Ho_Chi_Minh';
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const getCleanupHour = () => {
+  const parsed = parseInt(process.env.MANUAL_JOB_CLEANUP_HOUR ?? '12', 10);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 23 ? parsed : 12;
+};
+
+/** Xóa việc ghi tay có ngày <= hôm nay (giờ VN). */
+const getManualJobCleanupCutoff = () =>
+  moment().tz(TIMEZONE).add(1, 'day').startOf('day').toDate();
 
 /**
- * Xóa việc ghi tay đã qua ngày (trước hôm nay theo giờ VN),
- * rồi đồng bộ lại trạng thái thợ (rảnh nếu không còn xe/việc bận).
+ * 12:00 hàng ngày (VN): xóa việc ghi tay đến hết hôm nay, đồng bộ thợ về rảnh nếu không còn bận xe.
  */
 const cleanupExpiredManualJobs = async () => {
-  const cutoff = getTodayStartVN();
+  const cutoff = getManualJobCleanupCutoff();
 
   const workers = await Worker.find({
-    'manualJobs.date': { $lt: cutoff },
+    manualJobs: { $exists: true, $ne: [] },
   }).select('_id manualJobs');
 
   if (workers.length === 0) {
@@ -47,26 +55,42 @@ const cleanupExpiredManualJobs = async () => {
     await syncWorkerStatus(workerId);
   }
 
-  const todayStr = moment().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
-  const workersWithActiveJobs = await Worker.find({
-    'manualJobs.status': 'co_viec',
-  }).select('_id manualJobs');
-
-  for (const worker of workersWithActiveJobs) {
-    const hasTodayJob = (worker.manualJobs || []).some((job) => {
-      if (job.status !== 'co_viec') return false;
-      return moment(job.date).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD') === todayStr;
-    });
-
-    if (hasTodayJob && !workerIds.some((id) => String(id) === String(worker._id))) {
-      await syncWorkerStatus(worker._id);
-    }
-  }
-
   return { deletedCount, workersUpdated: workerIds.length };
+};
+
+/**
+ * Chạy cleanup đúng một giờ mỗi ngày (mặc định 12:00 VN), không quét định kỳ.
+ */
+const scheduleDailyManualJobCleanup = (runCleanup) => {
+  const hour = getCleanupHour();
+
+  const scheduleNext = () => {
+    const now = moment().tz(TIMEZONE);
+    let nextRun = now.clone().startOf('day').hour(hour).minute(0).second(0).millisecond(0);
+    if (!now.isBefore(nextRun)) {
+      nextRun.add(1, 'day');
+    }
+
+    const delayMs = nextRun.diff(now);
+
+    const timer = setTimeout(() => {
+      runCleanup();
+      setInterval(runCleanup, MS_PER_DAY);
+    }, delayMs);
+
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+
+    return nextRun.format('YYYY-MM-DD HH:mm');
+  };
+
+  return scheduleNext();
 };
 
 module.exports = {
   cleanupExpiredManualJobs,
-  getTodayStartVN,
+  getManualJobCleanupCutoff,
+  getCleanupHour,
+  scheduleDailyManualJobCleanup,
 };
