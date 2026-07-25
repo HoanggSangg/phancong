@@ -16,9 +16,12 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const ktvMessageRoutes = require('./routes/ktvMessageRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
+const systemRoutes = require('./routes/systemRoutes');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
 const { initSalarySettings } = require('./utils/salarySettings');
 const { initAttendanceSettings } = require('./utils/attendanceSettings');
+const { initSystemSettings } = require('./utils/systemSettings');
+const { blockIfMaintenance } = require('./middleware/maintenance');
 const { trimAllCollections, getTrimSummary } = require('./utils/trimCollections');
 const {
   cleanupExpiredManualJobs,
@@ -170,6 +173,9 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+app.use(blockIfMaintenance);
+
+app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/external', externalRoutes);
 app.use('/api/worker', wokerRoutes);
@@ -206,6 +212,7 @@ mongoose
     await initRevenueDeductions();
     await initSalarySettings();
     await initAttendanceSettings();
+    await initSystemSettings();
     await startCollectionTrim();
     startManualJobCleanup();
 

@@ -11,7 +11,7 @@ const KtvMessageSettings = require('../models/KtvMessageSettings');
 const DEFAULT_MAX_KEEP = 5000;
 
 const DEFAULTS = {
-  skip: ['Worker', 'Location', 'Supervisor', 'Team', 'KtvMessageSettings'],
+  skip: ['Worker', 'Location', 'Supervisor', 'Team', 'KtvMessageSettings', 'SystemSettings'],
   carMax: 50_000,
   repairItemMax: 200_000,
   operationLogDays: 90,
