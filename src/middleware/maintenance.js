@@ -5,6 +5,7 @@ const { getCachedSystemSettings } = require('../utils/systemSettings');
 
 const ALWAYS_ALLOW_PREFIXES = [
   '/api/system/status',
+  '/api/system/version',
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/me',

@@ -30,6 +30,30 @@ const systemSettingsSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  /** Phiên bản cập nhật hệ thống (sau bảo trì) */
+  appVersion: {
+    type: String,
+    default: '1.0.0',
+    maxlength: 64,
+  },
+  appVersionMessage: {
+    type: String,
+    default: '',
+    maxlength: 500,
+  },
+  appVersionForceReload: {
+    type: Boolean,
+    default: false,
+  },
+  appVersionUpdatedAt: {
+    type: Date,
+    default: null,
+  },
+  appVersionUpdatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

@@ -1,5 +1,6 @@
 ﻿require('dotenv').config();
 
+const http = require('http');
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -17,6 +18,8 @@ const ktvMessageRoutes = require('./routes/ktvMessageRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const systemRoutes = require('./routes/systemRoutes');
+const { corsOptions } = require('./config/cors');
+const { initializeSocket } = require('./socket/socketServer');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
 const { initSalarySettings } = require('./utils/salarySettings');
 const { initAttendanceSettings } = require('./utils/attendanceSettings');
@@ -138,36 +141,7 @@ const startCollectionTrim = async () => {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-
-    const allowedOrigins = new Set([
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-      'http://192.168.1.250:5173',
-      'http://100.127.133.38:5173',
-      'https://fe-phancong.vercel.app',
-    ]);
-
-    if (
-      allowedOrigins.has(origin)
-      || /^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin)
-      || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin)
-      || /^http:\/\/localhost:\d+$/.test(origin)
-    ) {
-      return callback(null, true);
-    }
-
-    return callback(null, false);
-  },
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'Content-Type', 'Accept', 'Authorization', 'X-Api-Key'],
-  credentials: true,
-};
+const server = http.createServer(app);
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
@@ -204,6 +178,8 @@ app.use((err, req, res, next) => {
   });
 });
 
+initializeSocket(server);
+
 mongoose
   .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/phancong')
   .then(async () => {
@@ -216,7 +192,7 @@ mongoose
     await startCollectionTrim();
     startManualJobCleanup();
 
-    app.listen(PORT, '0.0.0.0', () => {
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Server is running on http://localhost:${PORT}`);
     });
   })
