@@ -69,9 +69,19 @@ const escapeRegex = (value = '') =>
 const normalizePlateSearch = (plate = '') =>
   String(plate || '').trim().toUpperCase().replace(/\s/g, '');
 
+/** Match plates ignoring spaces in DB or search input (e.g. "30A12345" ~ "30A 12345"). */
+const buildPlateSearchRegex = (plate = '') => {
+  const normalized = normalizePlateSearch(plate);
+  if (!normalized) return null;
+  return normalized
+    .split('')
+    .map((ch) => escapeRegex(ch))
+    .join('\\s*');
+};
+
 const buildManageCarsFilter = (query = {}, ktvWorkerId = null) => {
   const filter = {};
-  const plateSearch = normalizePlateSearch(query.plateNumber);
+  const plateRegex = buildPlateSearchRegex(query.plateNumber);
 
   if (ktvWorkerId && query.mine === '1') {
     filter['workers.worker'] = ktvWorkerId;
@@ -85,8 +95,8 @@ const buildManageCarsFilter = (query = {}, ktvWorkerId = null) => {
     filter.supervisor = query.supervisor;
   }
 
-  if (plateSearch) {
-    filter.plateNumber = { $regex: escapeRegex(plateSearch), $options: 'i' };
+  if (plateRegex) {
+    filter.plateNumber = { $regex: plateRegex, $options: 'i' };
     return filter;
   }
 
