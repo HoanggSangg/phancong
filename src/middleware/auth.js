@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { setupAuditLog } = require('../utils/auditLog');
-const { hasPermission, usesCustomPermissions } = require('../utils/permissions');
+const { hasPermission } = require('../utils/permissions');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'phancong-dev-secret-change-me';
 const USER_CACHE_TTL_MS = 60_000;
@@ -57,14 +57,13 @@ const access = (roles, permission) => (req, res, next) => {
       return next();
     }
 
-    if (usesCustomPermissions(req.user)) {
-      if (permission && hasPermission(req.user, permission)) {
-        return next();
-      }
-      return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này' });
+    // Catalog quyền (default theo role hoặc custom) là nguồn chính
+    if (permission && hasPermission(req.user, permission)) {
+      return next();
     }
 
-    if (roles.includes(req.user.role)) {
+    // Fallback danh sách role (tương thích route cũ / thiếu permission key)
+    if (Array.isArray(roles) && roles.includes(req.user.role)) {
       return next();
     }
 

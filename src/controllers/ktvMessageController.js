@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Car = require('../models/Car');
 const KtvMessage = require('../models/KtvMessage');
+const { isKtvLike } = require('../utils/permissions');
 const {
   getKtvMessageSettings,
   updateKtvMessageSettings,
@@ -16,7 +17,7 @@ const normalizeROKey = (roNumber = '', roCode = '') => {
 };
 
 const getEligibleReceiverUsers = async () => User.find({
-  role: { $in: ['admin', 'giam_sat'] },
+  role: { $in: ['admin', 'giam_sat', 'cvdv'] },
   isActive: true,
 })
   .select('fullName username role')
@@ -25,8 +26,8 @@ const getEligibleReceiverUsers = async () => User.find({
 
 const createMessage = async (req, res) => {
   try {
-    if (req.user?.role !== 'ktv') {
-      return res.status(403).json({ message: 'Chỉ KTV mới được gửi tin nhắn' });
+    if (!isKtvLike(req.user)) {
+      return res.status(403).json({ message: 'Chỉ KTV / Lái xe / Kho mới được gửi tin nhắn' });
     }
 
     const {
@@ -204,8 +205,8 @@ const markMessageRead = async (req, res) => {
 
 const getSentMessages = async (req, res) => {
   try {
-    if (req.user?.role !== 'ktv') {
-      return res.status(403).json({ message: 'Chỉ KTV mới xem được tin đã gửi' });
+    if (!isKtvLike(req.user)) {
+      return res.status(403).json({ message: 'Chỉ KTV / Lái xe / Kho mới xem được tin đã gửi' });
     }
 
     const filter = { sender: req.user._id };
@@ -228,8 +229,8 @@ const getSentMessages = async (req, res) => {
 
 const acknowledgeReadNotice = async (req, res) => {
   try {
-    if (req.user?.role !== 'ktv') {
-      return res.status(403).json({ message: 'Chỉ KTV mới xác nhận thông báo' });
+    if (!isKtvLike(req.user)) {
+      return res.status(403).json({ message: 'Chỉ KTV / Lái xe / Kho mới xác nhận thông báo' });
     }
 
     const message = await KtvMessage.findOne({

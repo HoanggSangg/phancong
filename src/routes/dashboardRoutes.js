@@ -11,7 +11,11 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/overview', access(['admin'], 'reports.dashboard'), getDashboardOverview);
-router.get('/revenue-settings', access(['admin'], 'reports.dashboard'), getRevenueSettings);
+router.get(
+  '/revenue-settings',
+  access(['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'], 'reports.dashboard'),
+  getRevenueSettings
+);
 router.put('/revenue-settings', access(['admin'], 'reports.dashboard'), updateRevenueSettings);
 
 module.exports = router;

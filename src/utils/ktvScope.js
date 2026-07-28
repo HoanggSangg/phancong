@@ -1,7 +1,8 @@
 const Car = require('../models/Car');
+const { isKtvLike } = require('./permissions');
 
 const getKtvWorkerId = (user) => {
-  if (user?.role !== 'ktv') return null;
+  if (!isKtvLike(user)) return null;
   return user.worker ? String(user.worker) : null;
 };
 

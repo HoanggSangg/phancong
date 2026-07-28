@@ -13,7 +13,7 @@ const IMAGE_API_BASE = (process.env.DOCUMENT_IMAGE_API_BASE || 'http://api2026.o
 );
 
 router.use(authenticate);
-router.use(access(['admin', 'giam_sat', 'ktv'], 'cars.upload-image'));
+router.use(access(['admin', 'lai_xe', 'kho', 'cvdv'], 'cars.upload-image'));
 
 router.get('/files', async (req, res) => {
   try {

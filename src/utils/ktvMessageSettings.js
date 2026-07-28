@@ -80,7 +80,8 @@ const canUserViewMessage = (user, message) => {
   const receivers = (message.receiverUserIds || []).map((id) => String(id));
 
   if (receivers.length === 0) {
-    return user.role === 'admin' || user.role === 'giam_sat';
+    const { isGiamSatLike } = require('./permissions');
+    return user.role === 'admin' || isGiamSatLike(user);
   }
 
   return receivers.includes(userId);
@@ -98,7 +99,8 @@ const buildMessageFilterForUser = async (user) => {
   const userId = String(user._id);
 
   if (receiverIds.length === 0) {
-    return user.role === 'giam_sat' ? {} : { _id: null };
+    const { isGiamSatLike } = require('./permissions');
+    return isGiamSatLike(user) ? {} : { _id: null };
   }
 
   if (receiverIds.includes(userId)) {

@@ -26,12 +26,14 @@ const buildCountRevenueMap = async (workerIds = []) => {
 };
 
 const resolveRepairHistoryWorkerFilter = (req, queryWorkerId) => {
-  if (req.user.role === 'ktv') {
+  const { isKtvLike, isGiamSatLike } = require('./permissions');
+
+  if (isKtvLike(req.user)) {
     if (!req.user.worker) return { blocked: true };
     return { workerId: req.user.worker.toString() };
   }
 
-  if (queryWorkerId && ['admin', 'giam_sat'].includes(req.user.role)) {
+  if (queryWorkerId && (req.user.role === 'admin' || isGiamSatLike(req.user))) {
     return { workerId: String(queryWorkerId) };
   }
 

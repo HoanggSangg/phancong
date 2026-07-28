@@ -3,6 +3,7 @@ const Worker = require('../models/Worker');
 const Car = require('../models/Car');
 const RepairOrderItem = require('../models/RepairOrderItem');
 const cloudinary = require('../cloudinary');
+const { isKtvLike } = require('../utils/permissions');
 const {
   resolveDateRange,
   toDateBounds,
@@ -35,7 +36,7 @@ const uploadImage = async (image) => {
 // Lấy tất cả thợ
 const getAllWorkers = async (req, res) => {
   try {
-    if (req.user.role === 'ktv') {
+    if (isKtvLike(req.user)) {
       if (!req.user.worker) {
         return res.status(200).json([]);
       }
@@ -90,7 +91,7 @@ const getAllWorkers = async (req, res) => {
 const getWorkerById = async (req, res) => {
   const { id } = req.params;
 
-  if (req.user.role === 'ktv' && req.user.worker?.toString() !== id) {
+  if (isKtvLike(req.user) && req.user.worker?.toString() !== id) {
     return res.status(403).json({ message: 'Bạn chỉ xem được hồ sơ thợ của mình' });
   }
 
@@ -801,7 +802,7 @@ const bulkImportWorkers = async (req, res) => {
 const COMPLETED_STATUSES = ['done', 'waiting_wash', 'waiting_handover', 'delivered'];
 
 const resolveWorkerScope = (req, queryWorkerId) => {
-  if (req.user.role === 'ktv') {
+  if (isKtvLike(req.user)) {
     if (!req.user.worker) return { error: 'Tài khoản KTV chưa liên kết thợ' };
     return { workerId: req.user.worker.toString() };
   }

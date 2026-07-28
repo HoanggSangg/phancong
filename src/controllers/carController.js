@@ -30,6 +30,7 @@ const {
   populateCarWorkers,
 } = require('../utils/workerStatus');
 const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
+const { isKtvLike } = require('../utils/permissions');
 const OperationLog = require('../models/OperationLog');
 const { createKtvMessage } = require('../utils/ktvMessageSettings');
 const {
@@ -1235,7 +1236,7 @@ const getRepairHistory = async (req, res) => {
         costAmount: Number(item.costAmount || 0),
         amount: Number(item.amount || 0),
         assignments: visibleAssignments,
-        allAssignments: req.user.role === 'ktv' ? undefined : mappedAssignments,
+        allAssignments: isKtvLike(req.user) ? undefined : mappedAssignments,
         createdAt: item.createdAt,
       };
     }).filter((item) => item.assignments.length > 0 || !workerFilter);
@@ -1280,7 +1281,7 @@ const getRepairHistory = async (req, res) => {
       };
     }
 
-    if (req.user.role === 'ktv') {
+    if (isKtvLike(req.user)) {
       return res.json({
         ...baseResponse,
         items: responseItems.map(({ allAssignments, ...rest }) => rest),
@@ -1727,8 +1728,8 @@ const notifyAdminAboutCar = async (req, res) => {
   const { id } = req.params;
   const note = String(req.body?.message || '').trim();
 
-  if (req.user?.role !== 'ktv') {
-    return res.status(403).json({ message: 'Chỉ KTV mới được gửi thông báo cho admin' });
+  if (!isKtvLike(req.user)) {
+    return res.status(403).json({ message: 'Chỉ KTV / Lái xe / Kho mới được gửi thông báo cho admin' });
   }
 
   const ownsCar = await assertKtvOwnsCar(req.user, id);

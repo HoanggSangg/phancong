@@ -20,7 +20,7 @@ router.post('/', access(['admin', 'giam_sat'], 'cars.add'), carController.create
 router.put('/:id', access(['admin', 'giam_sat'], 'cars.add'), carController.updateCar);
 router.post('/:id/sync-external', access(['admin', 'giam_sat'], 'cars.add'), carController.syncCarFromExternal);
 router.put('/:id/status', access(['admin', 'giam_sat'], 'cars.add'), carController.updateCarStatus);
-router.post('/:id/notify-admin', access(['ktv'], 'cars.manage'), carController.notifyAdminAboutCar);
+router.post('/:id/notify-admin', access(['ktv', 'lai_xe', 'kho'], 'cars.manage'), carController.notifyAdminAboutCar);
 router.delete('/:id', access(['admin'], 'cars.delete'), carController.deleteCar);
 
 module.exports = router;

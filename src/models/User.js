@@ -24,7 +24,7 @@ const userSchema = new Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'giam_sat', 'ktv'],
+    enum: ['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'],
     default: 'ktv',
   },
   worker: {

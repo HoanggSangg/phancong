@@ -23,6 +23,9 @@ const ROLE_LABELS = {
   admin: 'Admin',
   giam_sat: 'Giám sát',
   ktv: 'KTV',
+  lai_xe: 'Lái xe',
+  kho: 'Kho',
+  cvdv: 'CVDV',
 };
 
 const CONDITION_LABELS = {
