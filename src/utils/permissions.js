@@ -8,6 +8,7 @@ const PERMISSION_CATALOG = [
   { key: 'cars.today', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
   { key: 'cars.manage', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
   { key: 'cars.add', defaultRoles: ['admin', 'giam_sat'] },
+  { key: 'cars.upload-image', defaultRoles: ['admin', 'giam_sat', 'ktv'] },
   { key: 'cars.delete', defaultRoles: ['admin'] },
   { key: 'cars.voice', defaultRoles: ['admin', 'giam_sat'] },
   { key: 'workers.main', defaultRoles: ['admin', 'giam_sat'] },

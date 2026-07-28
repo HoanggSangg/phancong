@@ -18,6 +18,7 @@ const ktvMessageRoutes = require('./routes/ktvMessageRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const systemRoutes = require('./routes/systemRoutes');
+const documentImageRoutes = require('./routes/documentImageRoutes');
 const { corsOptions } = require('./config/cors');
 const { initializeSocket } = require('./socket/socketServer');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
@@ -144,10 +145,13 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 
 app.use(cors(corsOptions));
+app.use(blockIfMaintenance);
+
+// Proxy upload multipart TRƯỚC body-parser — tránh đọc/nuốt stream FormData
+app.use('/api/document-images', documentImageRoutes);
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-app.use(blockIfMaintenance);
 
 app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
