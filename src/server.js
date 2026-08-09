@@ -20,6 +20,7 @@ const attendanceRoutes = require('./routes/attendanceRoutes');
 const systemRoutes = require('./routes/systemRoutes');
 const documentImageRoutes = require('./routes/documentImageRoutes');
 const { corsOptions } = require('./config/cors');
+const { forceHttps } = require('./middleware/forceHttps');
 const { initializeSocket } = require('./socket/socketServer');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
 const { initSalarySettings } = require('./utils/salarySettings');
@@ -144,6 +145,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 
+if (process.env.TRUST_PROXY === 'true' || process.env.FORCE_HTTPS === 'true') {
+  app.set('trust proxy', 1);
+}
+
+app.use(forceHttps);
 app.use(cors(corsOptions));
 app.use(blockIfMaintenance);
 
