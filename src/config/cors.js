@@ -8,7 +8,7 @@ const STATIC_ORIGINS = new Set([
   // Cùng mạng LAN
   'http://192.168.1.250:5173',
   'https://192.168.1.250:5173',
-  // Khác mạng + Tailscale (máy Vũ)
+  // Khác mạng + Tailscale (máy cũ)
   'http://100.127.133.38:5173',
   'https://100.127.133.38:5173',
   'https://fe-phancong.vercel.app',

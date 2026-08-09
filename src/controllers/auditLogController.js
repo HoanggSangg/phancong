@@ -39,6 +39,11 @@ const getOperationLogs = async (req, res) => {
           { fullName: { $regex: keyword, $options: 'i' } },
           { username: { $regex: keyword, $options: 'i' } },
           { targetLabel: { $regex: keyword, $options: 'i' } },
+          { 'metadata.plateNumber': { $regex: keyword, $options: 'i' } },
+          { 'metadata.soChungTu': { $regex: keyword, $options: 'i' } },
+          { 'metadata.baseTt': { $regex: keyword, $options: 'i' } },
+          { 'metadata.roCode': { $regex: keyword, $options: 'i' } },
+          { 'metadata.fileName': { $regex: keyword, $options: 'i' } },
         ];
       }
     }

@@ -1,6 +1,6 @@
 /**
  * Tắt chế độ bảo trì trong MongoDB.
- * Chạy trên máy backend (máy Vũ): node scripts/disableMaintenance.js
+ * Chạy trên máy backend (máy cũ): node scripts/disableMaintenance.js
  */
 require('dotenv').config();
 const mongoose = require('mongoose');

@@ -10,7 +10,11 @@ const userCache = new Map();
 const authenticate = async (req, res, next) => {
   try {
     const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    let token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    // Cho <img>/<video src> — không gửi được header Authorization
+    if (!token && req.query?.access_token) {
+      token = String(req.query.access_token).trim();
+    }
 
     if (!token) {
       return res.status(401).json({ message: 'Chưa đăng nhập' });

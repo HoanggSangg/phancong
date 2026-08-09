@@ -4,6 +4,8 @@ const { URL } = require('url');
 const express = require('express');
 const axios = require('axios');
 const { authenticate, access } = require('../middleware/auth');
+const OperationLog = require('../models/OperationLog');
+const Car = require('../models/Car');
 
 const router = express.Router();
 
@@ -11,15 +13,179 @@ const IMAGE_API_BASE = (process.env.DOCUMENT_IMAGE_API_BASE || 'http://api2026.o
   /\/?$/,
   '/',
 );
+const IMAGE_DELETE_API =
+  process.env.DOCUMENT_IMAGE_DELETE_API || 'http://images.otobathanh.vn/api/image/delete';
+const EXTERNAL_BASE = 'http://local.otobathanh.vn/api';
+const EXTERNAL_HEADERS = process.env.OTO_API_KEY
+  ? { 'X-Api-Key': process.env.OTO_API_KEY }
+  : {};
+
+/** TT... hoặc hpt/TT... */
+const isSafeDocKey = (value) => /^(hpt\/)?TT[A-Z0-9]+$/i.test(String(value || '').trim());
+
+const isSafeFileName = (value) => {
+  const name = String(value || '').trim();
+  return Boolean(name) && !name.includes('..') && !name.includes('/') && !name.includes('\\');
+};
+
+const normalizePlate = (plate = '') =>
+  String(plate || '').toUpperCase().replace(/\s/g, '');
+
+const getBaseTt = (soChungTu = '') =>
+  String(soChungTu || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^HPT\//, '');
+
+const getImageKind = (soChungTu = '') =>
+  /^hpt\//i.test(String(soChungTu || '').trim()) ? 'parts' : 'car';
+
+const buildUploadsPath = (soChungTu, fileName) => {
+  const docPath = String(soChungTu)
+    .trim()
+    .split('/')
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  return `Uploads/${docPath}/${encodeURIComponent(fileName)}`;
+};
+
+const buildPublicFileUrl = (soChungTu, fileName) => {
+  const base = IMAGE_API_BASE.replace(/\/?$/, '/');
+  return `${base}${buildUploadsPath(soChungTu, fileName)}`;
+};
+
+const findCarBySoChungTu = async (soChungTu) => {
+  const baseTt = getBaseTt(soChungTu);
+  if (!baseTt) return null;
+
+  return Car.findOne({
+    $or: [
+      { roNumber: baseTt },
+      { roCode: baseTt },
+      { roKey: baseTt },
+    ],
+  })
+    .select('_id plateNumber roNumber roCode externalCarTypeName status currentDate')
+    .sort({ currentDate: -1, createdAt: -1 })
+    .lean();
+};
+
+const resolveDocumentContext = async (soChungTu) => {
+  const baseTt = getBaseTt(soChungTu);
+  const kind = getImageKind(soChungTu);
+  const car = await findCarBySoChungTu(baseTt);
+
+  let plateNumber = normalizePlate(car?.plateNumber || '');
+  let roNumber = String(car?.roNumber || baseTt).toUpperCase();
+  let roCode = String(car?.roCode || '').toUpperCase();
+  let externalCarTypeName = car?.externalCarTypeName || '';
+  let source = car ? 'car' : 'none';
+
+  if (!plateNumber || !roCode) {
+    try {
+      const quoteRes = await axios.get(`${EXTERNAL_BASE}/baogia/${baseTt}`, {
+        headers: EXTERNAL_HEADERS,
+        timeout: 12_000,
+      });
+      const header = quoteRes.data?.header || {};
+      plateNumber = plateNumber || normalizePlate(header.soXe || '');
+      roNumber = String(header.soChungtu || roNumber || baseTt).toUpperCase();
+      roCode = String(header.khoa || roCode || '').toUpperCase();
+      externalCarTypeName =
+        externalCarTypeName
+        || header.loaiXe?.tenViet
+        || header.loaiXe?.tenAnh
+        || header.loaiXe?.ma
+        || '';
+      if (!car) source = 'external';
+    } catch {
+      // giữ dữ liệu đã có trong DB / none
+    }
+  }
+
+  return {
+    soChungTu: String(soChungTu || '').trim(),
+    baseTt,
+    kind,
+    plateNumber,
+    roNumber,
+    roCode,
+    externalCarTypeName,
+    carId: car?._id ? String(car._id) : null,
+    carStatus: car?.status || '',
+    source,
+  };
+};
+
+const writeDocumentImageLog = async ({ req, action, soChungTu, fileName = '' }) => {
+  const user = req.user;
+  if (!user) return null;
+
+  const context = await resolveDocumentContext(soChungTu);
+  const kindLabel = context.kind === 'parts' ? 'ảnh phụ tùng' : 'ảnh xe';
+  const actionLabel = action === 'delete' ? 'Xóa' : 'Tải lên';
+  const targetLabel =
+    [context.plateNumber, context.roNumber || context.baseTt].filter(Boolean).join(' · ')
+    || context.baseTt;
+
+  return OperationLog.create({
+    user: user._id,
+    username: user.username || '',
+    fullName: user.fullName || '',
+    role: user.role || '',
+    action,
+    module: 'document_image',
+    targetId: context.carId || context.baseTt,
+    targetLabel,
+    description: `${user.fullName || user.username || 'User'}: ${actionLabel} ${kindLabel} — ${targetLabel}`,
+    metadata: {
+      soChungTu: context.soChungTu,
+      baseTt: context.baseTt,
+      kind: context.kind,
+      fileName: String(fileName || '').trim(),
+      plateNumber: context.plateNumber,
+      roNumber: context.roNumber,
+      roCode: context.roCode,
+      carId: context.carId,
+      externalCarTypeName: context.externalCarTypeName,
+      source: context.source,
+    },
+  });
+};
 
 router.use(authenticate);
 router.use(access(['admin', 'lai_xe', 'kho', 'cvdv'], 'cars.upload-image'));
+
+router.get('/context', async (req, res) => {
+  try {
+    const soChungTu = String(req.query.soChungTu || '').trim();
+    if (!soChungTu) {
+      return res.status(400).json({ message: 'Thiếu số chứng từ' });
+    }
+    if (!isSafeDocKey(soChungTu) && !/^TT[A-Z0-9]+$/i.test(soChungTu)) {
+      return res.status(400).json({ message: 'Số chứng từ không hợp lệ' });
+    }
+
+    const context = await resolveDocumentContext(getBaseTt(soChungTu));
+    return res.json(context);
+  } catch (error) {
+    console.error('document-images/context error:', error.message);
+    return res.status(500).json({
+      message: 'Không lấy được thông tin xe',
+      detail: error.message,
+    });
+  }
+});
 
 router.get('/files', async (req, res) => {
   try {
     const soChungTu = String(req.query.soChungTu || '').trim();
     if (!soChungTu) {
       return res.status(400).json({ message: 'Thiếu số chứng từ' });
+    }
+    if (!isSafeDocKey(soChungTu)) {
+      return res.status(400).json({ message: 'Số chứng từ không hợp lệ' });
     }
 
     const response = await axios.get(`${IMAGE_API_BASE}api/ImageAPI/GetFiles`, {
@@ -29,7 +195,6 @@ router.get('/files', async (req, res) => {
       validateStatus: () => true,
     });
 
-    // API cũ trả 404/500 khi chưa có thư mục ảnh → coi như danh sách rỗng
     if (response.status === 404 || response.status === 500) {
       return res.json([]);
     }
@@ -54,10 +219,118 @@ router.get('/files', async (req, res) => {
   }
 });
 
+router.get('/content', (req, res) => {
+  const soChungTu = String(req.query.soChungTu || '').trim();
+  const fileName = String(req.query.fileName || '').trim();
+
+  if (!isSafeDocKey(soChungTu) || !isSafeFileName(fileName)) {
+    return res.status(400).json({ message: 'Tham số không hợp lệ' });
+  }
+
+  let target;
+  try {
+    target = new URL(buildUploadsPath(soChungTu, fileName), IMAGE_API_BASE);
+  } catch {
+    return res.status(500).json({ message: 'Cấu hình máy chủ ảnh không hợp lệ' });
+  }
+
+  const lib = target.protocol === 'https:' ? https : http;
+  const proxyReq = lib.get(target, (proxyRes) => {
+    const status = proxyRes.statusCode || 502;
+    if (status >= 400) {
+      proxyRes.resume();
+      return res.status(status === 404 ? 404 : 502).json({
+        message: status === 404 ? 'Không tìm thấy file ảnh' : `Lỗi máy chủ ảnh (HTTP ${status})`,
+      });
+    }
+
+    const headers = {
+      'Content-Type': proxyRes.headers['content-type'] || 'application/octet-stream',
+      'Cache-Control': 'private, max-age=300',
+    };
+    if (proxyRes.headers['content-length']) {
+      headers['Content-Length'] = proxyRes.headers['content-length'];
+    }
+    if (req.query.download === '1') {
+      headers['Content-Disposition'] = `attachment; filename="${fileName.replace(/"/g, '')}"`;
+    }
+    res.writeHead(status, headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (error) => {
+    console.error('document-images/content proxy error:', error.message);
+    if (!res.headersSent) {
+      res.status(502).json({
+        message: 'Không kết nối được máy chủ ảnh',
+        detail: error.message,
+      });
+    }
+  });
+
+  req.on('aborted', () => {
+    proxyReq.destroy();
+  });
+});
+
+router.delete('/file', async (req, res) => {
+  try {
+    const soChungTu = String(req.query.soChungTu || req.body?.soChungTu || '').trim();
+    const fileName = String(req.query.fileName || req.body?.fileName || '').trim();
+
+    if (!isSafeDocKey(soChungTu) || !isSafeFileName(fileName)) {
+      return res.status(400).json({ message: 'Tham số không hợp lệ' });
+    }
+
+    const publicUrl = buildPublicFileUrl(soChungTu, fileName);
+    const response = await axios.post(
+      IMAGE_DELETE_API,
+      { Url: publicUrl },
+      {
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        timeout: 30_000,
+        validateStatus: () => true,
+      },
+    );
+
+    if (response.status < 200 || response.status >= 300) {
+      return res.status(response.status >= 400 && response.status < 500 ? response.status : 502).json({
+        message: response.data?.message || `Không xóa được ảnh (HTTP ${response.status})`,
+        url: publicUrl,
+      });
+    }
+
+    writeDocumentImageLog({
+      req,
+      action: 'delete',
+      soChungTu,
+      fileName,
+    }).catch((error) => {
+      console.error('document-images delete audit error:', error.message);
+    });
+
+    return res.json({
+      message: response.data?.message || 'Đã xóa ảnh',
+      url: publicUrl,
+    });
+  } catch (error) {
+    console.error('document-images/file delete error:', error.message);
+    return res.status(502).json({
+      message: 'Không kết nối được máy chủ xóa ảnh',
+      detail: error.message,
+    });
+  }
+});
+
 router.post('/upload', (req, res) => {
   const soChungTu = String(req.query.soChungTu || '').trim();
+  const fileName = String(req.query.fileName || '').trim();
+
   if (!soChungTu) {
     return res.status(400).json({ message: 'Thiếu số chứng từ' });
+  }
+  if (!isSafeDocKey(soChungTu)) {
+    return res.status(400).json({ message: 'Số chứng từ không hợp lệ' });
   }
 
   let target;
@@ -83,10 +356,21 @@ router.post('/upload', (req, res) => {
       headers,
     },
     (proxyRes) => {
+      const status = proxyRes.statusCode || 502;
       const outHeaders = { ...proxyRes.headers };
-      // Tránh lệch encoding khi FE đọc JSON/text
-      res.writeHead(proxyRes.statusCode || 502, outHeaders);
+      res.writeHead(status, outHeaders);
       proxyRes.pipe(res);
+
+      if (status >= 200 && status < 300) {
+        writeDocumentImageLog({
+          req,
+          action: 'upload',
+          soChungTu,
+          fileName,
+        }).catch((error) => {
+          console.error('document-images upload audit error:', error.message);
+        });
+      }
     },
   );
 
