@@ -34,7 +34,8 @@ const toSettingsPayload = (settings, runtime) => ({
 
 const getPublicStatus = async (_req, res) => {
   try {
-    const settings = getCachedSystemSettings();
+    // Đọc DB để FE nhận trạng thái bảo trì mới nhất
+    const settings = await getSystemSettings();
     return res.json({
       message: 'OK',
       ...toPublicStatus(settings),

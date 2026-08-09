@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { JWT_SECRET } = require('./auth');
-const { getCachedSystemSettings } = require('../utils/systemSettings');
+const { getSystemSettings } = require('../utils/systemSettings');
 
 const ALWAYS_ALLOW_PREFIXES = [
   '/api/system/status',
@@ -38,7 +38,8 @@ const tryResolveAdmin = async (req) => {
  * /api/system/status và login/register luôn mở.
  */
 const blockIfMaintenance = async (req, res, next) => {
-  const settings = getCachedSystemSettings();
+  // Đọc lại DB để tắt bảo trì có hiệu lực ngay (không kẹt cache cũ)
+  const settings = await getSystemSettings();
   if (!settings.maintenanceMode) return next();
   if (isAlwaysAllowed(req)) return next();
 
