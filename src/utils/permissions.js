@@ -29,6 +29,7 @@ const PERMISSION_CATALOG = [
   { key: 'reports.praise', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'reports.warning', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'system.locations', defaultRoles: ['admin'] },
+  { key: 'system.insurance', defaultRoles: ['admin'] },
   { key: 'system.supervisors', defaultRoles: ['admin'] },
   { key: 'system.users', defaultRoles: ['admin'] },
   { key: 'system.permissions', defaultRoles: ['admin'] },
