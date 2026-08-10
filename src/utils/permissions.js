@@ -34,7 +34,6 @@ const PERMISSION_CATALOG = [
   { key: 'system.users', defaultRoles: ['admin'] },
   { key: 'system.permissions', defaultRoles: ['admin'] },
   { key: 'system.audit-logs', defaultRoles: ['admin'] },
-  { key: 'system.ktv-messages', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'system.settings', defaultRoles: ['admin'] },
   { key: 'payroll.manage', defaultRoles: ['admin'] },
   { key: 'payroll.day-work', defaultRoles: ['admin'] },

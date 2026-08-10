@@ -14,7 +14,6 @@ const teamRoutes = require('./routes/teamRoutes');
 const externalRoutes = require('./routes/externalRoutes');
 const auditLogRoutes = require('./routes/auditLogRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
-const ktvMessageRoutes = require('./routes/ktvMessageRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const systemRoutes = require('./routes/systemRoutes');
@@ -44,9 +43,7 @@ const logTrimResults = (results, summary) => {
   console.log('\n🧹 Kiểm tra dữ liệu DB');
   console.log(`   Chính sách: Car delivered >${summary.deliveredCarMonths} tháng + max ${summary.carMax}`);
   console.log(`   RepairOrderItem max ${summary.repairItemMax}`);
-  console.log(
-    `   OperationLog >${summary.operationLogDays} ngày | KtvMessage >${summary.ktvMessageDays} ngày + max ${summary.ktvMessageMax}`,
-  );
+  console.log(`   OperationLog >${summary.operationLogDays} ngày`);
   console.log(`   Bỏ qua: ${summary.skip.join(', ')}`);
 
   let totalDeleted = 0;
@@ -76,10 +73,6 @@ const logTrimResults = (results, summary) => {
       if (row.collection === 'RepairOrderItem') {
         const d = row.details;
         console.log(`      ↳ orphan: ${d.orphanDeleted}, vượt max: ${d.countDeleted}`);
-      }
-      if (row.collection === 'KtvMessage') {
-        const d = row.details;
-        console.log(`      ↳ theo tuổi: ${d.deletedByAge}, vượt max: ${d.deletedByCount}`);
       }
     }
   });
@@ -171,7 +164,6 @@ app.use('/api/insurance', insuranceRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/ktv-messages', ktvMessageRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/attendance', attendanceRoutes);
 

@@ -33,7 +33,6 @@ const {
 const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
 const { isKtvLike } = require('../utils/permissions');
 const OperationLog = require('../models/OperationLog');
-const { createKtvMessage } = require('../utils/ktvMessageSettings');
 const {
   normalizeROFields,
   buildDuplicateROFilter,
@@ -1808,66 +1807,6 @@ const saveManualRepairItems = async (req, res) => {
   }
 };
 
-const notifyAdminAboutCar = async (req, res) => {
-  const { id } = req.params;
-  const note = String(req.body?.message || '').trim();
-
-  if (!isKtvLike(req.user)) {
-    return res.status(403).json({ message: 'Chỉ KTV / Lái xe / Kho mới được gửi thông báo cho admin' });
-  }
-
-  const ownsCar = await assertKtvOwnsCar(req.user, id);
-  if (!ownsCar) {
-    return res.status(403).json({ message: 'Bạn không được gán cho xe này' });
-  }
-
-  const car = await Car.findById(id)
-    .populate('location', 'name')
-    .populate('supervisor', 'name')
-    .lean();
-
-  if (!car) {
-    return res.status(404).json({ message: 'Xe không tìm thấy' });
-  }
-
-  const statusLabel = CAR_STATUS_LABELS[car.status] || car.status;
-  const description = note
-    ? `KTV báo admin về xe ${car.plateNumber} (${statusLabel}): ${note}`
-    : `KTV báo admin về xe ${car.plateNumber} — trạng thái hiện tại: ${statusLabel}`;
-
-  const log = await OperationLog.create({
-    user: req.user._id,
-    username: req.user.username || '',
-    fullName: req.user.fullName || '',
-    role: req.user.role || '',
-    action: 'ktv_notify',
-    module: 'car',
-    targetId: String(car._id),
-    targetLabel: car.plateNumber,
-    description,
-    metadata: {
-      carStatus: car.status,
-      carStatusLabel: statusLabel,
-      message: note,
-      location: car.location?.name || '',
-      supervisor: car.supervisor?.name || '',
-    },
-  });
-
-  const ktvMessage = await createKtvMessage({
-    sender: req.user,
-    car,
-    note,
-    operationLogId: log._id,
-  });
-
-  return res.status(201).json({
-    message: 'Đã gửi thông báo cho admin',
-    log,
-    ktvMessage,
-  });
-};
-
 const syncRepairItemsFromChiTiet = async (car, chiTiet = []) => {
   const existingApiItems = await RepairOrderItem.find({
     car: car._id,
@@ -2014,6 +1953,5 @@ module.exports = {
   assignRepairItemWorkers,
   saveManualRepairItems,
   getRepairHistory,
-  notifyAdminAboutCar,
   syncCarFromExternal,
 };

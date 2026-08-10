@@ -72,8 +72,6 @@ const buildRuntimeConfig = () => {
         carMax: trim.carMax,
         repairItemMax: trim.repairItemMax,
         operationLogDays: trim.operationLogDays,
-        ktvMessageDays: trim.ktvMessageDays,
-        ktvMessageMax: trim.ktvMessageMax,
       },
     },
   };
