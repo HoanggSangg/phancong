@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { filterQuoteChiTiet, sanitizeBaoGiaPayload } = require('../utils/externalCarData');
 
 const EXTERNAL_BASE = 'http://local.otobathanh.vn/api';
 const API_KEY = process.env.OTO_API_KEY;
@@ -44,7 +45,8 @@ const buildRawPayload = async ({ plate, baogiaGanNhat }) => {
 
   return {
     ...(vehicle || {}),
-    baogiaGanNhat,
+    // Lọc Hủy / Ghi thêm ngay khi tra cứu thêm xe
+    baogiaGanNhat: sanitizeBaoGiaPayload(baogiaGanNhat),
   };
 };
 
@@ -118,7 +120,7 @@ const lookupCarOrRO = async (req, res) => {
 
     const plate = normalizePlate(keyword);
     const vehicle = await fetchVehicleInfo(plate);
-    const baogiaGanNhat = await fetchLatestQuote(plate);
+    const baogiaGanNhat = sanitizeBaoGiaPayload(await fetchLatestQuote(plate));
 
     return res.json({
       success: true,
@@ -176,7 +178,8 @@ const fetchRepairDetailsForCar = async (plateNumber, roCode = '') => {
     baogiaGanNhat = await fetchLatestQuote(plate);
   }
 
-  const chiTiet = (baogiaGanNhat?.chiTiet || []).filter((x) => x.huy !== 1);
+  // Bỏ dòng Hủy / Ghi thêm — không load vào báo giá phân công
+  const chiTiet = filterQuoteChiTiet(baogiaGanNhat?.chiTiet || []);
 
   return { chiTiet, baogiaGanNhat };
 };

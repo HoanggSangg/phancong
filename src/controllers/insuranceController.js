@@ -16,6 +16,8 @@ const parseDate = (value) => {
   return d;
 };
 
+const pickText = (value) => String(value || '').trim();
+
 const pickPayload = (body = {}) => {
   const payload = {};
 
@@ -32,13 +34,43 @@ const pickPayload = (body = {}) => {
     payload.roCode = String(body.roCode || '').toUpperCase().trim();
   }
   if (body.externalCarTypeName !== undefined) {
-    payload.externalCarTypeName = String(body.externalCarTypeName || '').trim();
+    payload.externalCarTypeName = pickText(body.externalCarTypeName);
   }
   if (body.advisorName !== undefined) {
-    payload.advisorName = String(body.advisorName || '').trim();
+    payload.advisorName = pickText(body.advisorName);
+  }
+  if (body.insuranceCompanyKey !== undefined) {
+    payload.insuranceCompanyKey = pickText(body.insuranceCompanyKey);
+  }
+  if (body.insurancePolicyNumber !== undefined) {
+    payload.insurancePolicyNumber = pickText(body.insurancePolicyNumber);
+  }
+  if (body.insuranceAssessor !== undefined) {
+    payload.insuranceAssessor = pickText(body.insuranceAssessor);
+  }
+  if (body.insuranceAssessorPhone !== undefined) {
+    payload.insuranceAssessorPhone = pickText(body.insuranceAssessorPhone);
+  }
+  if (body.insuranceStartDate !== undefined) {
+    payload.insuranceStartDate = parseDate(body.insuranceStartDate);
+  }
+  if (body.insuranceApproved !== undefined) {
+    payload.insuranceApproved = body.insuranceApproved === true || body.insuranceApproved === 1 || body.insuranceApproved === '1';
+  }
+  if (body.insuranceApprovedDate !== undefined) {
+    payload.insuranceApprovedDate = parseDate(body.insuranceApprovedDate);
+  }
+  if (body.insuranceFileCompleted !== undefined) {
+    payload.insuranceFileCompleted = body.insuranceFileCompleted === true
+      || body.insuranceFileCompleted === 1
+      || body.insuranceFileCompleted === '1';
+  }
+  if (body.deductibleAmount !== undefined) {
+    const n = Number(body.deductibleAmount);
+    payload.deductibleAmount = Number.isFinite(n) && n >= 0 ? n : 0;
   }
   if (body.notes !== undefined) {
-    payload.notes = String(body.notes || '').trim();
+    payload.notes = pickText(body.notes);
   }
   if (body.deliveryDate !== undefined) {
     payload.deliveryDate = parseDate(body.deliveryDate);
@@ -66,6 +98,10 @@ exports.listInsuranceCars = async (req, res) => {
         { notes: re },
         { externalCarTypeName: re },
         { advisorName: re },
+        { insuranceCompanyKey: re },
+        { insurancePolicyNumber: re },
+        { insuranceAssessor: re },
+        { insuranceAssessorPhone: re },
       ];
     }
 

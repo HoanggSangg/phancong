@@ -66,11 +66,17 @@ const getItemRevenueDate = (item, car = null) => {
 
 const getItemRevenueBaseAmount = (item = {}) => {
   if (getCachedRevenueBase() === 'cost') {
+    // giaVon API đã là tổng giá vốn — không nhân SL
+    if (item.raw?.giaVon != null && item.raw?.giaVon !== '') {
+      return Math.round(Number(item.raw.giaVon) || 0);
+    }
+
     const costAmount = Number(item.costAmount ?? 0);
     if (costAmount > 0) return costAmount;
 
-    const unitCostPrice = Number(item.unitCostPrice ?? item.raw?.giaVon ?? 0);
-    const quantity = Number(item.quantity ?? item.raw?.soLuong ?? 1) || 1;
+    // Manual / không có raw: unitCostPrice là đơn giá
+    const unitCostPrice = Number(item.unitCostPrice ?? 0);
+    const quantity = Number(item.quantity ?? 1) || 1;
     return Math.round(unitCostPrice * quantity);
   }
 

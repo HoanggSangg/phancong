@@ -39,7 +39,7 @@ const {
   getROLookupTokens,
 } = require('../utils/roKey');
 const { resolveExternalItemCost, enrichRepairItemCost } = require('../utils/repairItemCost');
-const { extractExternalCarFields } = require('../utils/externalCarData');
+const { extractExternalCarFields, isExcludedQuoteLine } = require('../utils/externalCarData');
 
 const CAR_STATUS_LABELS = {
   pending: 'Chờ sửa',
@@ -265,7 +265,10 @@ const createCar = async (req, res) => {
   try {
     const data = { ...req.body };
 
-    const repairItems = Array.isArray(data.repairItems) ? data.repairItems : [];
+    // Bỏ hạng mục Hủy / Ghi thêm — kể cả khi FE gửi nhầm
+    const repairItems = (Array.isArray(data.repairItems) ? data.repairItems : []).filter(
+      (item) => !isExcludedQuoteLine(item?.raw || item),
+    );
     delete data.repairItems;
 
     if (!Array.isArray(data.workers)) data.workers = [];
@@ -1420,6 +1423,15 @@ const getCarRepairItems = async (req, res) => {
       }
     }
 
+    // Gỡ hạng mục Ghi thêm / Hủy đã lưu nhầm (API: isGhiThem)
+    const excludedIds = items
+      .filter((item) => !item.isManual && isExcludedQuoteLine(item.raw || {}))
+      .map((item) => item._id);
+    if (excludedIds.length) {
+      await RepairOrderItem.deleteMany({ _id: { $in: excludedIds } });
+      items = items.filter((item) => !excludedIds.some((id) => String(id) === String(item._id)));
+    }
+
     return res.json(items.map(enrichRepairItemCost));
   } catch (error) {
     console.error('Lỗi lấy chi tiết sửa chữa:', error);
@@ -1537,7 +1549,16 @@ const fetchRepairItemsForCar = async (carId) => {
     .populate('worker', 'name')
     .sort({ isManual: 1, groupName: 1, createdAt: 1 });
 
-  return items.map(enrichRepairItemCost);
+  const excludedIds = items
+    .filter((item) => !item.isManual && isExcludedQuoteLine(item.raw || {}))
+    .map((item) => item._id);
+  if (excludedIds.length) {
+    await RepairOrderItem.deleteMany({ _id: { $in: excludedIds } });
+  }
+
+  return items
+    .filter((item) => !excludedIds.some((id) => String(id) === String(item._id)))
+    .map(enrichRepairItemCost);
 };
 
 const assignRepairItemWorkers = async (req, res) => {

@@ -1,30 +1,43 @@
+/**
+ * giaVon / giá mua từ API báo giá đã là TỔNG giá vốn của dòng
+ * (không phải đơn giá × số lượng).
+ */
 const resolveExternalItemCost = (item = {}) => {
-  const unitCostPrice = Number(item.giaVon ?? item.unitCostPrice ?? 0) || 0;
-  const quantity = Number(item.soLuong ?? item.quantity ?? 1) || 1;
+  const totalCost = Math.round(
+    Number(item.giaVon ?? item.costAmount ?? item.unitCostPrice ?? 0) || 0,
+  );
 
   return {
-    unitCostPrice,
-    costAmount: Math.round(unitCostPrice * quantity),
+    // Cột "Giá vốn" hiển thị đúng giá nhập (tổng)
+    unitCostPrice: totalCost,
+    costAmount: totalCost,
   };
 };
 
 const enrichRepairItemCost = (item = {}) => {
   const doc = item?.toObject ? item.toObject() : { ...item };
-  const hasStoredCost = doc.unitCostPrice != null && doc.unitCostPrice !== '';
 
-  if (hasStoredCost) {
-    const unitCostPrice = Number(doc.unitCostPrice) || 0;
-    const quantity = Number(doc.quantity || 1) || 1;
+  // Ưu tiên giaVon từ raw API — nguồn đúng, đã là tổng (sửa dữ liệu cũ bị nhân SL)
+  if (doc.raw?.giaVon != null && doc.raw?.giaVon !== '') {
+    const totalCost = Math.round(Number(doc.raw.giaVon) || 0);
     return {
       ...doc,
-      unitCostPrice,
-      costAmount: Number(doc.costAmount ?? Math.round(unitCostPrice * quantity)) || 0,
+      unitCostPrice: totalCost,
+      costAmount: totalCost,
+    };
+  }
+
+  if (doc.costAmount != null && doc.costAmount !== '') {
+    const costAmount = Math.round(Number(doc.costAmount) || 0);
+    return {
+      ...doc,
+      unitCostPrice: Number(doc.unitCostPrice) || costAmount,
+      costAmount,
     };
   }
 
   const fromRaw = resolveExternalItemCost({
-    giaVon: doc.raw?.giaVon,
-    soLuong: doc.quantity ?? doc.raw?.soLuong,
+    giaVon: doc.unitCostPrice,
   });
 
   return {

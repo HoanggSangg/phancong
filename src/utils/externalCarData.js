@@ -24,8 +24,46 @@ const extractExternalCarFields = ({ baogiaGanNhat, vehicle = null } = {}) => {
   };
 };
 
+/** Flag checkbox API (huy / ghiThem / thuHoi…): 1 | true | '1' | 'true' */
+const isExternalFlagOn = (value) => {
+  if (value === 1 || value === true) return true;
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'x';
+  }
+  return false;
+};
+
+/**
+ * Dòng chi tiết không đưa vào báo giá / phân công:
+ * - Hủy (`huy`)
+ * - Ghi thêm (`isGhiThem` từ API OtoBaThanh)
+ */
+const isExcludedQuoteLine = (item = {}) =>
+  isExternalFlagOn(item.huy)
+  || isExternalFlagOn(item.isGhiThem)
+  || isExternalFlagOn(item.ghiThem)
+  || isExternalFlagOn(item.GhiThem)
+  || isExternalFlagOn(item.IsGhiThem);
+
+const filterQuoteChiTiet = (chiTiet = []) =>
+  (Array.isArray(chiTiet) ? chiTiet : []).filter((item) => !isExcludedQuoteLine(item));
+
+/** Làm sạch báo giá trước khi trả FE / lưu — bỏ Hủy & Ghi thêm ngay từ lookup. */
+const sanitizeBaoGiaPayload = (baogiaGanNhat) => {
+  if (!baogiaGanNhat || typeof baogiaGanNhat !== 'object') return baogiaGanNhat;
+  return {
+    ...baogiaGanNhat,
+    chiTiet: filterQuoteChiTiet(baogiaGanNhat.chiTiet || []),
+  };
+};
+
 module.exports = {
   formatDateVN,
   buildDeliveryTimeFromHeader,
   extractExternalCarFields,
+  isExternalFlagOn,
+  isExcludedQuoteLine,
+  filterQuoteChiTiet,
+  sanitizeBaoGiaPayload,
 };
