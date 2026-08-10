@@ -9,6 +9,11 @@ const ALWAYS_ALLOW_PREFIXES = [
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/me',
+  // Tải/xem ảnh chứng từ — công khai ngay cả khi bảo trì
+  '/api/document-images/context',
+  '/api/document-images/files',
+  '/api/document-images/content',
+  '/api/document-images/upload',
 ];
 
 const isAlwaysAllowed = (req) => {

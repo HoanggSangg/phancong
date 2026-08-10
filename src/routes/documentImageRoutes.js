@@ -3,9 +3,11 @@ const https = require('https');
 const { URL } = require('url');
 const express = require('express');
 const axios = require('axios');
-const { authenticate, access } = require('../middleware/auth');
+const jwt = require('jsonwebtoken');
+const { authenticate, access, JWT_SECRET } = require('../middleware/auth');
 const OperationLog = require('../models/OperationLog');
 const Car = require('../models/Car');
+const User = require('../models/User');
 
 const router = express.Router();
 
@@ -154,10 +156,28 @@ const writeDocumentImageLog = async ({ req, action, soChungTu, fileName = '' }) 
   });
 };
 
-router.use(authenticate);
-router.use(access(['admin', 'lai_xe', 'kho', 'cvdv'], 'cars.upload-image'));
+/** Gắn req.user nếu có token hợp lệ — không chặn khi thiếu / sai token (API công khai). */
+const optionalAuthenticate = async (req, _res, next) => {
+  try {
+    const header = req.headers.authorization || '';
+    let token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token && req.query?.access_token) {
+      token = String(req.query.access_token).trim();
+    }
+    if (!token) return next();
 
-router.get('/context', async (req, res) => {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.userId).select('-password');
+    if (user?.isActive) {
+      req.user = user;
+    }
+  } catch {
+    // bỏ qua — vẫn cho dùng API công khai
+  }
+  return next();
+};
+
+const handleContext = async (req, res) => {
   try {
     const soChungTu = String(req.query.soChungTu || '').trim();
     if (!soChungTu) {
@@ -176,9 +196,9 @@ router.get('/context', async (req, res) => {
       detail: error.message,
     });
   }
-});
+};
 
-router.get('/files', async (req, res) => {
+const handleFiles = async (req, res) => {
   try {
     const soChungTu = String(req.query.soChungTu || '').trim();
     if (!soChungTu) {
@@ -217,9 +237,9 @@ router.get('/files', async (req, res) => {
       detail: error.message,
     });
   }
-});
+};
 
-router.get('/content', (req, res) => {
+const handleContent = (req, res) => {
   const soChungTu = String(req.query.soChungTu || '').trim();
   const fileName = String(req.query.fileName || '').trim();
 
@@ -246,7 +266,7 @@ router.get('/content', (req, res) => {
 
     const headers = {
       'Content-Type': proxyRes.headers['content-type'] || 'application/octet-stream',
-      'Cache-Control': 'private, max-age=300',
+      'Cache-Control': 'public, max-age=300',
     };
     if (proxyRes.headers['content-length']) {
       headers['Content-Length'] = proxyRes.headers['content-length'];
@@ -271,58 +291,9 @@ router.get('/content', (req, res) => {
   req.on('aborted', () => {
     proxyReq.destroy();
   });
-});
+};
 
-router.delete('/file', async (req, res) => {
-  try {
-    const soChungTu = String(req.query.soChungTu || req.body?.soChungTu || '').trim();
-    const fileName = String(req.query.fileName || req.body?.fileName || '').trim();
-
-    if (!isSafeDocKey(soChungTu) || !isSafeFileName(fileName)) {
-      return res.status(400).json({ message: 'Tham số không hợp lệ' });
-    }
-
-    const publicUrl = buildPublicFileUrl(soChungTu, fileName);
-    const response = await axios.post(
-      IMAGE_DELETE_API,
-      { Url: publicUrl },
-      {
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        timeout: 30_000,
-        validateStatus: () => true,
-      },
-    );
-
-    if (response.status < 200 || response.status >= 300) {
-      return res.status(response.status >= 400 && response.status < 500 ? response.status : 502).json({
-        message: response.data?.message || `Không xóa được ảnh (HTTP ${response.status})`,
-        url: publicUrl,
-      });
-    }
-
-    writeDocumentImageLog({
-      req,
-      action: 'delete',
-      soChungTu,
-      fileName,
-    }).catch((error) => {
-      console.error('document-images delete audit error:', error.message);
-    });
-
-    return res.json({
-      message: response.data?.message || 'Đã xóa ảnh',
-      url: publicUrl,
-    });
-  } catch (error) {
-    console.error('document-images/file delete error:', error.message);
-    return res.status(502).json({
-      message: 'Không kết nối được máy chủ xóa ảnh',
-      detail: error.message,
-    });
-  }
-});
-
-router.post('/upload', (req, res) => {
+const handleUpload = (req, res) => {
   const soChungTu = String(req.query.soChungTu || '').trim();
   const fileName = String(req.query.fileName || '').trim();
 
@@ -389,6 +360,67 @@ router.post('/upload', (req, res) => {
   });
 
   req.pipe(proxyReq);
-});
+};
+
+// —— Công khai: xem danh sách, xem ảnh, tải lên (không cần đăng nhập) ——
+router.get('/context', handleContext);
+router.get('/files', handleFiles);
+router.get('/content', handleContent);
+router.post('/upload', optionalAuthenticate, handleUpload);
+
+// —— Chỉ user đăng nhập mới được xóa ——
+router.delete(
+  '/file',
+  authenticate,
+  access(['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'], 'cars.upload-image'),
+  async (req, res) => {
+    try {
+      const soChungTu = String(req.query.soChungTu || req.body?.soChungTu || '').trim();
+      const fileName = String(req.query.fileName || req.body?.fileName || '').trim();
+
+      if (!isSafeDocKey(soChungTu) || !isSafeFileName(fileName)) {
+        return res.status(400).json({ message: 'Tham số không hợp lệ' });
+      }
+
+      const publicUrl = buildPublicFileUrl(soChungTu, fileName);
+      const response = await axios.post(
+        IMAGE_DELETE_API,
+        { Url: publicUrl },
+        {
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          timeout: 30_000,
+          validateStatus: () => true,
+        },
+      );
+
+      if (response.status < 200 || response.status >= 300) {
+        return res.status(response.status >= 400 && response.status < 500 ? response.status : 502).json({
+          message: response.data?.message || `Không xóa được ảnh (HTTP ${response.status})`,
+          url: publicUrl,
+        });
+      }
+
+      writeDocumentImageLog({
+        req,
+        action: 'delete',
+        soChungTu,
+        fileName,
+      }).catch((error) => {
+        console.error('document-images delete audit error:', error.message);
+      });
+
+      return res.json({
+        message: response.data?.message || 'Đã xóa ảnh',
+        url: publicUrl,
+      });
+    } catch (error) {
+      console.error('document-images/file delete error:', error.message);
+      return res.status(502).json({
+        message: 'Không kết nối được máy chủ xóa ảnh',
+        detail: error.message,
+      });
+    }
+  },
+);
 
 module.exports = router;

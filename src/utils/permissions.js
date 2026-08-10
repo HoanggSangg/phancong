@@ -9,13 +9,13 @@ const ROLES = {
 
 const KTV_LIKE_ROLES = ['ktv', 'lai_xe', 'kho'];
 const GIAM_SAT_LIKE_ROLES = ['giam_sat', 'cvdv'];
-const UPLOAD_IMAGE_ROLES = ['admin', 'lai_xe', 'kho', 'cvdv'];
+const UPLOAD_IMAGE_ROLES = ['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'];
 
 const PERMISSION_CATALOG = [
   { key: 'cars.today', defaultRoles: ['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'] },
   { key: 'cars.manage', defaultRoles: ['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'] },
   { key: 'cars.add', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
-  { key: 'cars.upload-image', defaultRoles: ['admin', 'lai_xe', 'kho', 'cvdv'] },
+  { key: 'cars.upload-image', defaultRoles: ['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'] },
   { key: 'cars.delete', defaultRoles: ['admin'] },
   { key: 'cars.voice', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'workers.main', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
