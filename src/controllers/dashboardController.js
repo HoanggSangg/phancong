@@ -25,19 +25,39 @@ const aggregateRevenueInRange = async (from, to) => {
   const deductions = await getRevenueDeductions();
   const { fromDate, toDate } = toDateBounds(from, to);
 
-  const workers = await Worker.find()
+  // Xe có currentDate trong khoảng — bắt item lấy ngày doanh thu từ car (không chỉ updatedAt)
+  const carsInRangePromise = Car.find({
+    currentDate: { $gte: from, $lte: to },
+  })
+    .select('_id')
+    .lean();
+
+  const workersPromise = Worker.find()
     .select('name soBaoDanh team countRevenue')
     .populate('team', 'name')
     .lean();
+
+  const [workers, carsInRange] = await Promise.all([workersPromise, carsInRangePromise]);
   const countRevenueMap = await buildCountRevenueMap(workers.map((worker) => worker._id));
+  const carIds = carsInRange.map((car) => car._id);
 
   const repairItems = await RepairOrderItem.find({
-    $or: [
-      { worker: { $exists: true, $ne: null } },
-      { 'workerAssignments.worker': { $exists: true } },
-      { 'workerRevenues.worker': { $exists: true } },
+    $and: [
+      {
+        $or: [
+          { worker: { $exists: true, $ne: null } },
+          { 'workerAssignments.worker': { $exists: true } },
+          { 'workerRevenues.worker': { $exists: true } },
+        ],
+      },
+      {
+        $or: [
+          { updatedAt: { $gte: fromDate, $lte: toDate } },
+          { createdAt: { $gte: fromDate, $lte: toDate } },
+          ...(carIds.length ? [{ car: { $in: carIds } }] : []),
+        ],
+      },
     ],
-    updatedAt: { $gte: fromDate, $lte: toDate },
   })
     .select('-raw')
     .populate({

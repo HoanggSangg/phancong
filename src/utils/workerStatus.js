@@ -5,6 +5,15 @@ const Worker = require('../models/Worker');
 
 // Chỉ các trạng thái xe đang cần thợ trực tiếp xử lý mới khiến thợ được coi là đang bận
 const BUSY_CAR_STATUSES = ['working', 'waiting_wash', 'additional_repair'];
+/** Xe còn trong xưởng — bỏ delivered để không quét lịch sử khi tính rảnh/bận */
+const ACTIVE_CAR_STATUSES = [
+  'pending',
+  'working',
+  'done',
+  'waiting_wash',
+  'waiting_handover',
+  'additional_repair',
+];
 
 const normalizeWorkerId = (workerId) => {
   if (!workerId) return null;
@@ -19,6 +28,7 @@ const buildWorkerCarQuery = (workerId) => {
 
   const idStr = String(oid);
   return {
+    status: { $in: ACTIVE_CAR_STATUSES },
     $or: [
       { 'workers.worker': oid },
       { 'workers.worker': idStr },
@@ -133,6 +143,7 @@ const evaluateWorkersAvailabilityBatch = async (workers = []) => {
   if (!ids.length) return new Map();
 
   const cars = await Car.find({
+    status: { $in: ACTIVE_CAR_STATUSES },
     $or: [
       { 'workers.worker': { $in: ids } },
       { 'workers.worker': { $in: ids.map(String) } },

@@ -146,9 +146,11 @@ carSchema.methods.getCurrentStatusLabel = function () {
 
 carSchema.index({ roKey: 1 }, { unique: true, sparse: true });
 carSchema.index({ currentDate: 1, status: 1 });
+carSchema.index({ currentDate: 1 });
 carSchema.index({ status: 1 });
 carSchema.index({ plateNumber: 1, currentDate: 1 });
 carSchema.index({ location: 1, status: 1 });
 carSchema.index({ 'workers.worker': 1, status: 1 });
+carSchema.index({ isLate: 1, status: 1 });
 
 module.exports = mongoose.model('Car', carSchema);

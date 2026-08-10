@@ -7,6 +7,7 @@ const { fetchRepairDetailsForCar, fetchVehicleInfo } = require('./externalContro
 const moment = require('moment-timezone');
 const {
   isDateInRange,
+  toDateBounds,
   buildWorkerRevenuesForItem,
   getItemWorkerAssignments,
   getRevenueForWorkerFromItem,
@@ -58,11 +59,34 @@ const CAR_LIST_POPULATE = [
   { path: 'location', select: 'name' },
 ];
 
-const findCarsForList = (filter = {}) =>
-  Car.find(filter)
+/** Payload gọn cho trang phân công thợ (WokerAssignment) */
+const CAR_ASSIGNMENT_SELECT = 'plateNumber status workers.worker workers.role roNumber roCode currentDate';
+const CAR_ASSIGNMENT_POPULATE = [
+  { path: 'workers.worker', select: 'name' },
+];
+
+const ACTIVE_CAR_STATUSES_LIST = [
+  'pending',
+  'working',
+  'done',
+  'waiting_wash',
+  'waiting_handover',
+  'additional_repair',
+];
+
+const findCarsForList = (filter = {}, { slim = false } = {}) => {
+  if (slim) {
+    return Car.find(filter)
+      .select(CAR_ASSIGNMENT_SELECT)
+      .populate(CAR_ASSIGNMENT_POPULATE)
+      .lean();
+  }
+
+  return Car.find(filter)
     .select(CAR_LIST_SELECT)
     .populate(CAR_LIST_POPULATE)
     .lean();
+};
 
 const escapeRegex = (value = '') =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -188,7 +212,8 @@ const getAllCars = async (req, res) => {
     }
 
     if (req.query.statusFilter === 'not_delivered') {
-      filter.status = { $ne: 'delivered' };
+      // $in active dùng index status tốt hơn $ne delivered
+      filter.status = { $in: ACTIVE_CAR_STATUSES_LIST };
     } else if (req.query.statusFilter === 'delivered') {
       filter.status = 'delivered';
     } else if (req.query.status) {
@@ -200,7 +225,8 @@ const getAllCars = async (req, res) => {
       filter['workers.worker'] = ktvWorkerId;
     }
 
-    const cars = await findCarsForList(filter);
+    const slim = req.query.slim === '1' || req.query.fields === 'assignment';
+    const cars = await findCarsForList(filter, { slim });
 
     res.json(cars);
   } catch (error) {
@@ -942,19 +968,50 @@ const parseDeliveryDate = (deliveryTime) => {
 
 const getOverdueCars = async (req, res) => {
   try {
-    const allCars = await Car.find({
+    // Phase 1: lean nhẹ (không populate) để lọc trễ hẹn
+    const candidates = await Car.find({
       deliveryTime: { $exists: true, $ne: '' },
       status: { $ne: 'delivered' },
     })
-      .select(CAR_LIST_SELECT)
-      .populate(CAR_LIST_POPULATE)
+      .select('_id deliveryTime isLate')
       .lean();
 
     const now = new Date();
-    const overdueCars = allCars.filter((car) => {
+    const overdueIds = [];
+    const staleLateIds = [];
+    const staleOnTimeIds = [];
+
+    candidates.forEach((car) => {
       const deliveryDate = parseDeliveryDate(car.deliveryTime);
-      return deliveryDate && deliveryDate < now;
+      const late = Boolean(deliveryDate && deliveryDate < now);
+      if (late) overdueIds.push(car._id);
+      if (late && !car.isLate) staleLateIds.push(car._id);
+      if (!late && car.isLate) staleOnTimeIds.push(car._id);
     });
+
+    // Đồng bộ cờ isLate lệch (không chặn response)
+    if (staleLateIds.length || staleOnTimeIds.length) {
+      Promise.all([
+        staleLateIds.length
+          ? Car.updateMany({ _id: { $in: staleLateIds } }, { $set: { isLate: true } })
+          : null,
+        staleOnTimeIds.length
+          ? Car.updateMany({ _id: { $in: staleOnTimeIds } }, { $set: { isLate: false } })
+          : null,
+      ]).catch((error) => {
+        console.error('getOverdueCars isLate sync error:', error.message);
+      });
+    }
+
+    if (!overdueIds.length) {
+      return res.status(200).json({ cars: [] });
+    }
+
+    // Phase 2: chỉ populate xe trễ
+    const overdueCars = await Car.find({ _id: { $in: overdueIds } })
+      .select(CAR_LIST_SELECT)
+      .populate(CAR_LIST_POPULATE)
+      .lean();
 
     return res.status(200).json({ cars: overdueCars });
   } catch (err) {
@@ -1162,20 +1219,47 @@ const getRepairHistory = async (req, res) => {
     }
 
     const workerFilter = workerScope.workerId;
-    const itemQuery = workerFilter ? repairItemsForWorkerQuery(workerFilter) : {};
+    const rangeFrom = from || date;
+    const rangeTo = to || date;
+
+    const clauses = [];
+    if (workerFilter) {
+      clauses.push(repairItemsForWorkerQuery(workerFilter));
+    }
+
+    // Đẩy khoảng ngày xuống Mongo (vẫn filter chính xác theo getItemRevenueDate ở dưới)
+    if (rangeFrom && rangeTo) {
+      const { fromDate, toDate } = toDateBounds(rangeFrom, rangeTo);
+      const carsInRange = await Car.find({
+        currentDate: { $gte: rangeFrom, $lte: rangeTo },
+      })
+        .select('_id')
+        .lean();
+      const carIds = carsInRange.map((car) => car._id);
+
+      clauses.push({
+        $or: [
+          { updatedAt: { $gte: fromDate, $lte: toDate } },
+          { createdAt: { $gte: fromDate, $lte: toDate } },
+          ...(carIds.length ? [{ car: { $in: carIds } }] : []),
+        ],
+      });
+    }
+
+    const itemQuery = clauses.length > 1
+      ? { $and: clauses }
+      : (clauses[0] || {});
 
     let items = await RepairOrderItem.find(itemQuery)
+      .select('-raw')
       .populate({
         path: 'car',
-        select: 'plateNumber roNumber externalCarTypeName currentDate status isLate workers workerLogs',
-        populate: { path: 'workers.worker', select: 'name soBaoDanh' },
+        select: 'plateNumber roNumber externalCarTypeName currentDate status isLate',
       })
       .populate('workerAssignments.worker', 'name soBaoDanh')
       .populate('worker', 'name soBaoDanh')
-      .sort({ createdAt: -1 });
-
-    const rangeFrom = from || date;
-    const rangeTo = to || date;
+      .sort({ createdAt: -1 })
+      .lean();
 
     if (rangeFrom && rangeTo) {
       items = items.filter((item) =>

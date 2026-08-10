@@ -20,6 +20,10 @@ const DEFAULT_SETTINGS = {
 };
 
 let cached = { ...DEFAULT_SETTINGS };
+let cacheLoaded = false;
+let cacheExpiresAt = 0;
+/** TTL ngắn: giảm đập DB trên mọi request, vẫn bắt kịp thay đổi từ instance khác. */
+const CACHE_TTL_MS = 3_000;
 
 const normalizeSettings = (raw = {}) => ({
   maintenanceMode: Boolean(raw.maintenanceMode),
@@ -39,15 +43,28 @@ const normalizeSettings = (raw = {}) => ({
   updatedAt: raw.updatedAt || null,
 });
 
+const touchCache = (next) => {
+  cached = next;
+  cacheLoaded = true;
+  cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+};
+
 const getCachedSystemSettings = () => ({ ...cached });
 
-const getSystemSettings = async () => {
-  const doc = await SystemSettings.findOne({ singletonKey: 'default' }).lean();
-  if (!doc) {
-    cached = { ...DEFAULT_SETTINGS };
+/**
+ * @param {{ force?: boolean }} [options] force=true bỏ qua TTL, đọc DB ngay.
+ */
+const getSystemSettings = async ({ force = false } = {}) => {
+  if (!force && cacheLoaded && Date.now() < cacheExpiresAt) {
     return { ...cached };
   }
-  cached = normalizeSettings(doc);
+
+  const doc = await SystemSettings.findOne({ singletonKey: 'default' }).lean();
+  if (!doc) {
+    touchCache({ ...DEFAULT_SETTINGS });
+    return { ...cached };
+  }
+  touchCache(normalizeSettings(doc));
   return { ...cached };
 };
 
@@ -85,7 +102,7 @@ const saveSystemSettings = async (payload = {}, updatedBy = null) => {
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   ).lean();
-  cached = normalizeSettings(doc);
+  touchCache(normalizeSettings(doc));
   return { ...cached };
 };
 

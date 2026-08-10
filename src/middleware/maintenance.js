@@ -41,9 +41,9 @@ const tryResolveAdmin = async (req) => {
 /**
  * Khi bảo trì: chỉ admin còn dùng API; các request khác nhận 503.
  * /api/system/status và login/register luôn mở.
+ * getSystemSettings có TTL + invalidate khi save — không đọc DB mỗi request.
  */
 const blockIfMaintenance = async (req, res, next) => {
-  // Đọc lại DB để tắt bảo trì có hiệu lực ngay (không kẹt cache cũ)
   const settings = await getSystemSettings();
   if (!settings.maintenanceMode) return next();
   if (isAlwaysAllowed(req)) return next();
