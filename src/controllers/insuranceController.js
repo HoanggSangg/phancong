@@ -85,6 +85,9 @@ const pickPayload = (body = {}) => {
 exports.listInsuranceCars = async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (page - 1) * limit;
     const filter = {};
 
     if (q) {
@@ -105,14 +108,27 @@ exports.listInsuranceCars = async (req, res) => {
       ];
     }
 
-    const items = await InsuranceCar.find(filter)
-      .sort({
-        insuranceExpiryDate: 1,
-        createdAt: -1,
-      })
-      .lean();
+    const sort = {
+      insuranceExpiryDate: 1,
+      createdAt: -1,
+    };
 
-    res.json(items);
+    const [items, total] = await Promise.all([
+      InsuranceCar.find(filter).sort(sort).skip(skip).limit(limit).lean(),
+      InsuranceCar.countDocuments(filter),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
+
+    res.json({
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    });
   } catch (error) {
     console.error('❌ listInsuranceCars:', error);
     res.status(500).json({ message: 'Lỗi khi lấy danh sách xe bảo hiểm', error: error.message });
