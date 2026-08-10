@@ -127,9 +127,24 @@ const writeDocumentImageLog = async ({ req, action, soChungTu, fileName = '' }) 
   const context = await resolveDocumentContext(soChungTu);
   const kindLabel = context.kind === 'parts' ? 'ảnh phụ tùng' : 'ảnh xe';
   const actionLabel = action === 'delete' ? 'Xóa' : 'Tải lên';
+  const safeFileName = String(fileName || '').trim();
   const targetLabel =
     [context.plateNumber, context.roNumber || context.baseTt].filter(Boolean).join(' · ')
     || context.baseTt;
+
+  const details = [
+    `Thao tác: ${actionLabel} ${kindLabel}`,
+    safeFileName ? `Tên file: ${safeFileName}` : null,
+    context.soChungTu ? `Chứng từ: ${context.soChungTu}` : null,
+    context.plateNumber ? `Biển số: ${context.plateNumber}` : null,
+    context.roNumber || context.roCode
+      ? `RO: ${context.roNumber || context.roCode}`
+      : null,
+  ].filter(Boolean);
+
+  const description = safeFileName
+    ? `${user.fullName || user.username || 'User'}: ${actionLabel} ${kindLabel} «${safeFileName}» — ${targetLabel}`
+    : `${user.fullName || user.username || 'User'}: ${actionLabel} ${kindLabel} — ${targetLabel}`;
 
   return OperationLog.create({
     user: user._id,
@@ -139,19 +154,22 @@ const writeDocumentImageLog = async ({ req, action, soChungTu, fileName = '' }) 
     action,
     module: 'document_image',
     targetId: context.carId || context.baseTt,
-    targetLabel,
-    description: `${user.fullName || user.username || 'User'}: ${actionLabel} ${kindLabel} — ${targetLabel}`,
+    targetLabel: safeFileName ? `${targetLabel} · ${safeFileName}` : targetLabel,
+    description,
     metadata: {
       soChungTu: context.soChungTu,
       baseTt: context.baseTt,
       kind: context.kind,
-      fileName: String(fileName || '').trim(),
+      kindLabel,
+      actionLabel,
+      fileName: safeFileName,
       plateNumber: context.plateNumber,
       roNumber: context.roNumber,
       roCode: context.roCode,
       carId: context.carId,
       externalCarTypeName: context.externalCarTypeName,
       source: context.source,
+      details,
     },
   });
 };

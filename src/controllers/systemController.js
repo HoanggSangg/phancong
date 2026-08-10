@@ -6,7 +6,7 @@ const {
   publishAppVersion,
   getAppVersionPayload,
 } = require('../utils/systemSettings');
-const { getTrimSummary } = require('../utils/trimCollections');
+const { getTrimUsage } = require('../utils/trimCollections');
 const { getCleanupHour } = require('../utils/manualJobCleanup');
 const { getOnlineClientsSnapshot } = require('../socket/onlineClients');
 const { getIO } = require('../socket/socketServer');
@@ -45,8 +45,8 @@ const getPublicStatus = async (_req, res) => {
   }
 };
 
-const buildRuntimeConfig = () => {
-  const trim = getTrimSummary();
+const buildRuntimeConfig = async () => {
+  const trimUsage = await getTrimUsage();
   const mongoState = mongoose.connection.readyState;
   const mongoStateLabel = {
     0: 'disconnected',
@@ -68,10 +68,11 @@ const buildRuntimeConfig = () => {
       manualJobCleanupHour: getCleanupHour(),
       autoTrimCollections: process.env.AUTO_TRIM_COLLECTIONS !== 'false',
       trim: {
-        deliveredCarMonths: trim.deliveredCarMonths,
-        carMax: trim.carMax,
-        repairItemMax: trim.repairItemMax,
-        operationLogDays: trim.operationLogDays,
+        deliveredCarMonths: trimUsage.deliveredCarMonths,
+        carMax: trimUsage.carMax,
+        repairItemMax: trimUsage.repairItemMax,
+        operationLogDays: trimUsage.operationLogDays,
+        items: trimUsage.items,
       },
     },
   };
@@ -90,7 +91,7 @@ const getSettings = async (_req, res) => {
     return res.json({
       message: 'OK',
       data: {
-        ...toSettingsPayload(settings, buildRuntimeConfig()),
+        ...toSettingsPayload(settings, await buildRuntimeConfig()),
         appVersion: {
           ...getAppVersionPayload(settings),
           updatedByUser: publisher
@@ -146,7 +147,7 @@ const updateSettings = async (req, res) => {
 
     return res.json({
       message,
-      data: toSettingsPayload(data, buildRuntimeConfig()),
+      data: toSettingsPayload(data, await buildRuntimeConfig()),
     });
   } catch (err) {
     return res.status(500).json({ message: err.message || 'Lỗi cập nhật cấu hình hệ thống' });

@@ -350,11 +350,82 @@ const getTrimSummary = (config = buildTrimConfig()) => ({
   deliveredCarMonths: config.deliveredCarMonths,
 });
 
+/** Số liệu dùng / trần để hiển thị panel dung lượng (FE). */
+const getTrimUsage = async (config = buildTrimConfig()) => {
+  const [
+    carTotal,
+    carActive,
+    repairTotal,
+    logTotal,
+    workerTotal,
+    locationTotal,
+    supervisorTotal,
+    teamTotal,
+  ] = await Promise.all([
+    Car.countDocuments(),
+    Car.countDocuments({ status: { $ne: 'delivered' } }),
+    RepairOrderItem.countDocuments(),
+    OperationLog.countDocuments(),
+    Worker.countDocuments(),
+    Location.countDocuments(),
+    Supervisor.countDocuments(),
+    Team.countDocuments(),
+  ]);
+
+  return {
+    ...getTrimSummary(config),
+    items: [
+      {
+        key: 'car',
+        label: 'Xe',
+        used: carTotal,
+        max: config.carMax,
+        hint: `Giữ delivered ≤ ${config.deliveredCarMonths} tháng`,
+        details: { active: carActive },
+      },
+      {
+        key: 'repairItem',
+        label: 'Hạng mục sửa',
+        used: repairTotal,
+        max: config.repairItemMax,
+        hint: 'RepairOrderItem',
+      },
+      {
+        key: 'operationLog',
+        label: 'Lịch sử thao tác',
+        used: logTotal,
+        max: null,
+        hint: `Giữ ${config.operationLogDays} ngày`,
+      },
+      {
+        key: 'worker',
+        label: 'KTV / Worker',
+        used: workerTotal,
+        max: null,
+        hint: 'Master data — không trim',
+      },
+      {
+        key: 'master',
+        label: 'Địa điểm / GS / Team',
+        used: locationTotal + supervisorTotal + teamTotal,
+        max: null,
+        hint: 'Master data — không trim',
+        details: {
+          location: locationTotal,
+          supervisor: supervisorTotal,
+          team: teamTotal,
+        },
+      },
+    ],
+  };
+};
+
 module.exports = {
   DEFAULTS,
   DEFAULT_MAX_KEEP,
   buildTrimConfig,
   getTrimSummary,
+  getTrimUsage,
   trimAllCollections,
   trimCollection: trimByCount,
 };

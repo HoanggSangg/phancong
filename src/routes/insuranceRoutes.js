@@ -5,10 +5,18 @@ const { authenticate, access } = require('../middleware/auth');
 
 router.use(authenticate);
 
-router.get('/', access(['admin'], 'system.insurance'), insuranceController.listInsuranceCars);
-router.get('/:id', access(['admin'], 'system.insurance'), insuranceController.getInsuranceCar);
-router.post('/', access(['admin'], 'system.insurance'), insuranceController.createInsuranceCar);
-router.put('/:id', access(['admin'], 'system.insurance'), insuranceController.updateInsuranceCar);
-router.delete('/:id', access(['admin'], 'system.insurance'), insuranceController.deleteInsuranceCar);
+const canInsurance = access(['admin'], 'system.insurance');
+
+// Phụ tùng giá vốn BH — khai báo trước /:id
+router.get('/parts', canInsurance, insuranceController.listInsuranceParts);
+router.post('/parts', canInsurance, insuranceController.createInsurancePart);
+router.put('/parts/:id', canInsurance, insuranceController.updateInsurancePart);
+router.delete('/parts/:id', canInsurance, insuranceController.deleteInsurancePart);
+
+router.get('/', canInsurance, insuranceController.listInsuranceCars);
+router.get('/:id', canInsurance, insuranceController.getInsuranceCar);
+router.post('/', canInsurance, insuranceController.createInsuranceCar);
+router.put('/:id', canInsurance, insuranceController.updateInsuranceCar);
+router.delete('/:id', canInsurance, insuranceController.deleteInsuranceCar);
 
 module.exports = router;

@@ -1,4 +1,5 @@
 const InsuranceCar = require('../models/InsuranceCar');
+const InsurancePart = require('../models/InsurancePart');
 
 const normalizePlate = (plate = '') => String(plate).toUpperCase().replace(/\s/g, '');
 
@@ -109,7 +110,9 @@ exports.listInsuranceCars = async (req, res) => {
     }
 
     const sort = {
-      insuranceExpiryDate: 1,
+      // Chưa hoàn tất hồ sơ BH lên trước, rồi theo ngày duyệt BH (mới → cũ)
+      insuranceFileCompleted: 1,
+      insuranceApprovedDate: -1,
       createdAt: -1,
     };
 
@@ -206,5 +209,113 @@ exports.deleteInsuranceCar = async (req, res) => {
   } catch (error) {
     console.error('❌ deleteInsuranceCar:', error);
     res.status(500).json({ message: 'Lỗi khi xóa xe bảo hiểm', error: error.message });
+  }
+};
+
+const pickPartPayload = (body = {}) => {
+  const payload = {};
+  if (body.name !== undefined) payload.name = pickText(body.name);
+  if (body.carTypeName !== undefined) payload.carTypeName = pickText(body.carTypeName);
+  if (body.carBrand !== undefined) payload.carBrand = pickText(body.carBrand);
+  if (body.notes !== undefined) payload.notes = pickText(body.notes);
+  if (body.costPrice !== undefined) {
+    const n = Number(body.costPrice);
+    payload.costPrice = Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+  return payload;
+};
+
+exports.listInsuranceParts = async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+    const filter = {};
+
+    if (q) {
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(escaped, 'i');
+      filter.$or = [
+        { name: re },
+        { carTypeName: re },
+        { carBrand: re },
+        { notes: re },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      InsurancePart.find(filter).sort({ updatedAt: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
+      InsurancePart.countDocuments(filter),
+    ]);
+
+    res.json({
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit) || 1),
+      },
+    });
+  } catch (error) {
+    console.error('❌ listInsuranceParts:', error);
+    res.status(500).json({ message: 'Lỗi khi lấy danh sách phụ tùng BH', error: error.message });
+  }
+};
+
+exports.createInsurancePart = async (req, res) => {
+  try {
+    const payload = pickPartPayload(req.body);
+    if (!payload.name) {
+      return res.status(400).json({ message: 'Tên phụ tùng là bắt buộc' });
+    }
+    if (payload.costPrice == null) payload.costPrice = 0;
+    if (req.user?._id) payload.createdBy = req.user._id;
+
+    const created = await InsurancePart.create(payload);
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('❌ createInsurancePart:', error);
+    res.status(500).json({ message: 'Lỗi khi thêm phụ tùng BH', error: error.message });
+  }
+};
+
+exports.updateInsurancePart = async (req, res) => {
+  try {
+    const payload = pickPartPayload(req.body);
+    if (payload.name === '') {
+      return res.status(400).json({ message: 'Tên phụ tùng không được để trống' });
+    }
+
+    const updated = await InsurancePart.findByIdAndUpdate(req.params.id, payload, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!updated) {
+      return res.status(404).json({ message: 'Không tìm thấy phụ tùng BH' });
+    }
+
+    res.json(updated);
+  } catch (error) {
+    console.error('❌ updateInsurancePart:', error);
+    res.status(500).json({ message: 'Lỗi khi cập nhật phụ tùng BH', error: error.message });
+  }
+};
+
+exports.deleteInsurancePart = async (req, res) => {
+  try {
+    const deleted = await InsurancePart.findByIdAndDelete(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ message: 'Không tìm thấy phụ tùng BH' });
+    }
+
+    req.auditDeleted = { name: deleted.name };
+
+    res.json({ message: 'Xóa phụ tùng BH thành công' });
+  } catch (error) {
+    console.error('❌ deleteInsurancePart:', error);
+    res.status(500).json({ message: 'Lỗi khi xóa phụ tùng BH', error: error.message });
   }
 };
