@@ -45,19 +45,6 @@ const pages = [
     calls: [{ method: 'GET', path: '/api/worker' }],
   },
   {
-    name: 'Attendance calendar',
-    calls: [
-      { method: 'GET', path: '/api/attendance/workers' },
-      { method: 'GET', path: '/api/teams' },
-    ],
-  },
-  {
-    name: 'Day-work payroll',
-    calls: [
-      { method: 'GET', path: `/api/attendance/payroll/${new Date().getFullYear()}/${new Date().getMonth() + 1}` },
-    ],
-  },
-  {
     name: 'DT Payroll month',
     calls: [
       { method: 'GET', path: `/api/payroll/${new Date().getFullYear()}/${new Date().getMonth() + 1}` },

@@ -9,7 +9,7 @@ const OperationLog = require('../models/OperationLog');
 const DEFAULT_MAX_KEEP = 5000;
 
 const DEFAULTS = {
-  skip: ['Worker', 'Location', 'Supervisor', 'Team', 'SystemSettings'],
+  skip: ['Worker', 'Location', 'Supervisor', 'Team', 'SystemSettings', 'RoPartExport'],
   carMax: 50_000,
   repairItemMax: 200_000,
   operationLogDays: 90,

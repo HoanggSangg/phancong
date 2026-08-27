@@ -406,7 +406,9 @@ const buildDetailedDescription = async ({
 
   switch (key) {
     case 'auth:login':
-      description = `Đăng nhập — ${user?.fullName || user?.username} (@${user?.username}), vai trò ${ROLE_LABELS[user?.role] || user?.role}`;
+      description = user
+        ? `Đăng nhập — ${user.fullName || user.username} (@${user.username}), vai trò ${ROLE_LABELS[user.role] || user.role}`
+        : `Đăng nhập — ${body.username || 'không xác định'}`;
       break;
 
     case 'auth:register':
@@ -728,7 +730,7 @@ const logOperation = async ({
   }
 
   const { targetId, targetLabel } = await extractTarget(req, responseBody, rule);
-  const { description, details } = await buildDetailedDescription({
+  const { description: baseDescription, details: baseDetails } = await buildDetailedDescription({
     req,
     responseBody,
     rule,
@@ -736,6 +738,23 @@ const logOperation = async ({
     targetId,
     targetLabel,
   });
+
+  const statusCode = Number(res?.statusCode) || 200;
+  const success = statusCode >= 200 && statusCode < 300;
+  const errorMessage = success
+    ? ''
+    : String(responseBody?.detail || responseBody?.message || responseBody?.title || '').trim()
+      || `HTTP ${statusCode}`;
+  const details = [...(baseDetails || [])];
+  let description = baseDescription;
+
+  if (!success) {
+    details.unshift('Kết quả: Không thực hiện được');
+    if (errorMessage && !details.some((line) => String(line).includes(errorMessage))) {
+      details.push(`Lý do: ${errorMessage}`);
+    }
+    description = `Không thực hiện được — ${baseDescription}${errorMessage ? `. ${errorMessage}` : ''}`;
+  }
 
   return OperationLog.create({
     user: user?._id || null,
@@ -748,14 +767,25 @@ const logOperation = async ({
     targetLabel: targetLabel ? String(targetLabel) : '',
     description,
     metadata: {
+      success,
       method,
       path,
       params: req.params || {},
       body: sanitizePayload(req.body),
       details,
-      statusCode: res?.statusCode,
+      errorMessage,
+      statusCode,
     },
   });
+};
+
+const shouldAuditResponse = (req, statusCode) => {
+  if (statusCode >= 200 && statusCode < 300) return true;
+  if (statusCode < 400) return false;
+  if (statusCode !== 401) return true;
+  const path = (req.originalUrl || req.url || '').split('?')[0];
+  const rule = matchRouteRule(req.method, path);
+  return rule?.module === 'auth';
 };
 
 const setupAuditLog = (req, res) => {
@@ -763,7 +793,7 @@ const setupAuditLog = (req, res) => {
 
   const originalJson = res.json.bind(res);
   res.json = (body) => {
-    if (res.statusCode >= 200 && res.statusCode < 300) {
+    if (shouldAuditResponse(req, res.statusCode || 200)) {
       logOperation({ req, res, responseBody: body }).catch((err) => {
         console.error('Audit log error:', err.message);
       });

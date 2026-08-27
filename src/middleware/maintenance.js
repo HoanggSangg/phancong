@@ -14,6 +14,8 @@ const ALWAYS_ALLOW_PREFIXES = [
   '/api/document-images/files',
   '/api/document-images/content',
   '/api/document-images/upload',
+  '/api/hanghoa',
+  '/api/xe/xuat-kho',
 ];
 
 const isAlwaysAllowed = (req) => {

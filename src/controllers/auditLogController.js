@@ -44,6 +44,7 @@ const getOperationLogs = async (req, res) => {
           { 'metadata.baseTt': { $regex: keyword, $options: 'i' } },
           { 'metadata.roCode': { $regex: keyword, $options: 'i' } },
           { 'metadata.fileName': { $regex: keyword, $options: 'i' } },
+          { 'metadata.errorMessage': { $regex: keyword, $options: 'i' } },
         ];
       }
     }

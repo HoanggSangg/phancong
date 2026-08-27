@@ -20,12 +20,10 @@ const axios = require('axios');
   const y = new Date().getFullYear();
   const m = new Date().getMonth() + 1;
   const checks = [
-    ['GET calendar', `/api/attendance/calendar/${w._id}/${y}/${m}`],
     ['GET kpi', `/api/worker/kpi?period=month&workerId=${w._id}`],
     ['GET revenue chart', `/api/worker/revenue/chart?from=${y}-${String(m).padStart(2, '0')}-01&to=${y}-${String(m).padStart(2, '0')}-28`],
     ['GET car by id', `/api/cars/${c._id}`],
     ['GET repair items', `/api/cars/${c._id}/repair-items`],
-    ['GET attendance settings', '/api/attendance/settings'],
     ['GET payroll settings', '/api/payroll/settings'],
     ['GET users', '/api/auth/users'],
     ['GET dead /busy (expect 404)', '/api/worker/busy'],

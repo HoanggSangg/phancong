@@ -241,9 +241,7 @@ const publishUpdate = async (req, res) => {
         forceReload: data.appVersionForceReload,
         message: data.appVersionMessage,
       },
-    }).catch((err) => console.error('Audit log error:', err.message));
-
-    console.log(`System update published: ${data.appVersion} by ${req.user?.username || userId}`);
+    }).catch(() => {});
 
     return res.json({
       message: 'Đã phát hành cập nhật hệ thống',

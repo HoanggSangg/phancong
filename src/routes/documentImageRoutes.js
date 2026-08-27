@@ -208,7 +208,6 @@ const handleContext = async (req, res) => {
     const context = await resolveDocumentContext(getBaseTt(soChungTu));
     return res.json(context);
   } catch (error) {
-    console.error('document-images/context error:', error.message);
     return res.status(500).json({
       message: 'Không lấy được thông tin xe',
       detail: error.message,
@@ -249,7 +248,6 @@ const handleFiles = async (req, res) => {
 
     return res.json(files);
   } catch (error) {
-    console.error('document-images/files error:', error.message);
     return res.status(502).json({
       message: 'Không kết nối được máy chủ ảnh',
       detail: error.message,
@@ -272,43 +270,81 @@ const handleContent = (req, res) => {
     return res.status(500).json({ message: 'Cấu hình máy chủ ảnh không hợp lệ' });
   }
 
-  const lib = target.protocol === 'https:' ? https : http;
-  const proxyReq = lib.get(target, (proxyRes) => {
-    const status = proxyRes.statusCode || 502;
-    if (status >= 400) {
-      proxyRes.resume();
-      return res.status(status === 404 ? 404 : 502).json({
-        message: status === 404 ? 'Không tìm thấy file ảnh' : `Lỗi máy chủ ảnh (HTTP ${status})`,
-      });
+  const pump = (url, hops = 0) => {
+    if (hops > 4) {
+      if (!res.headersSent) {
+        res.status(502).json({ message: 'Máy chủ ảnh chuyển hướng quá nhiều' });
+      }
+      return;
     }
 
-    const headers = {
-      'Content-Type': proxyRes.headers['content-type'] || 'application/octet-stream',
-      'Cache-Control': 'public, max-age=300',
-    };
-    if (proxyRes.headers['content-length']) {
-      headers['Content-Length'] = proxyRes.headers['content-length'];
-    }
-    if (req.query.download === '1') {
-      headers['Content-Disposition'] = `attachment; filename="${fileName.replace(/"/g, '')}"`;
-    }
-    res.writeHead(status, headers);
-    proxyRes.pipe(res);
-  });
+    const lib = url.protocol === 'https:' ? https : http;
+    const proxyReq = lib.get(
+      url,
+      {
+        headers: { Accept: '*/*', 'User-Agent': 'phancong-document-images' },
+        timeout: 120_000,
+      },
+      (proxyRes) => {
+        const status = proxyRes.statusCode || 502;
+        const location = proxyRes.headers.location;
+        if (status >= 300 && status < 400 && location) {
+          proxyRes.resume();
+          try {
+            pump(new URL(location, url), hops + 1);
+          } catch {
+            if (!res.headersSent) {
+              res.status(502).json({ message: 'Máy chủ ảnh chuyển hướng không hợp lệ' });
+            }
+          }
+          return;
+        }
 
-  proxyReq.on('error', (error) => {
-    console.error('document-images/content proxy error:', error.message);
-    if (!res.headersSent) {
-      res.status(502).json({
-        message: 'Không kết nối được máy chủ ảnh',
-        detail: error.message,
-      });
-    }
-  });
+        if (status >= 400) {
+          proxyRes.resume();
+          if (!res.headersSent) {
+            res.status(status === 404 ? 404 : 502).json({
+              message: status === 404 ? 'Không tìm thấy file ảnh' : `Lỗi máy chủ ảnh (HTTP ${status})`,
+            });
+          }
+          return;
+        }
 
-  req.on('aborted', () => {
-    proxyReq.destroy();
-  });
+        const headers = {
+          'Content-Type': proxyRes.headers['content-type'] || 'application/octet-stream',
+          'Cache-Control': 'private, max-age=60',
+        };
+        if (req.query.download === '1') {
+          const safe = fileName.replace(/"/g, '');
+          headers['Content-Disposition'] =
+            `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+        }
+        res.writeHead(status, headers);
+        proxyRes.pipe(res);
+      },
+    );
+
+    proxyReq.on('timeout', () => {
+      proxyReq.destroy(new Error('Hết thời gian chờ máy chủ ảnh'));
+    });
+
+    proxyReq.on('error', (error) => {
+      if (!res.headersSent) {
+        res.status(502).json({
+          message: 'Không kết nối được máy chủ ảnh',
+          detail: error.message,
+        });
+      } else {
+        res.destroy(error);
+      }
+    });
+
+    req.on('aborted', () => {
+      proxyReq.destroy();
+    });
+  };
+
+  pump(target);
 };
 
 const handleUpload = (req, res) => {
@@ -356,15 +392,12 @@ const handleUpload = (req, res) => {
           action: 'upload',
           soChungTu,
           fileName,
-        }).catch((error) => {
-          console.error('document-images upload audit error:', error.message);
-        });
+        }).catch(() => {});
       }
     },
   );
 
   proxyReq.on('error', (error) => {
-    console.error('document-images/upload proxy error:', error.message);
     if (!res.headersSent) {
       res.status(502).json({
         message: 'Không kết nối được máy chủ ảnh',
@@ -423,16 +456,13 @@ router.delete(
         action: 'delete',
         soChungTu,
         fileName,
-      }).catch((error) => {
-        console.error('document-images delete audit error:', error.message);
-      });
+      }).catch(() => {});
 
       return res.json({
         message: response.data?.message || 'Đã xóa ảnh',
         url: publicUrl,
       });
     } catch (error) {
-      console.error('document-images/file delete error:', error.message);
       return res.status(502).json({
         message: 'Không kết nối được máy chủ xóa ảnh',
         detail: error.message,

@@ -36,7 +36,7 @@ const PERMISSION_CATALOG = [
   { key: 'system.audit-logs', defaultRoles: ['admin'] },
   { key: 'system.settings', defaultRoles: ['admin'] },
   { key: 'payroll.manage', defaultRoles: ['admin'] },
-  { key: 'payroll.day-work', defaultRoles: ['admin'] },
+  { key: 'labels.qr', defaultRoles: ['admin'] },
 ];
 
 const PERMISSION_KEYS = PERMISSION_CATALOG.map((item) => item.key);

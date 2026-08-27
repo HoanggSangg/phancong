@@ -15,16 +15,15 @@ const externalRoutes = require('./routes/externalRoutes');
 const auditLogRoutes = require('./routes/auditLogRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
-const attendanceRoutes = require('./routes/attendanceRoutes');
 const systemRoutes = require('./routes/systemRoutes');
 const documentImageRoutes = require('./routes/documentImageRoutes');
 const insuranceRoutes = require('./routes/insuranceRoutes');
+const { hanghoaRouter, xeRouter } = require('./routes/hanghoaXuatKhoRoutes');
 const { corsOptions } = require('./config/cors');
 const { forceHttps } = require('./middleware/forceHttps');
 const { initializeSocket } = require('./socket/socketServer');
 const { initRevenueDeductions } = require('./utils/revenueDeductions');
 const { initSalarySettings } = require('./utils/salarySettings');
-const { initAttendanceSettings } = require('./utils/attendanceSettings');
 const { initSystemSettings } = require('./utils/systemSettings');
 const { blockIfMaintenance } = require('./middleware/maintenance');
 const { trimAllCollections, getTrimSummary } = require('./utils/trimCollections');
@@ -153,6 +152,8 @@ app.use('/api/document-images', documentImageRoutes);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+app.use('/api/hanghoa', hanghoaRouter);
+app.use('/api/xe', xeRouter);
 app.use('/api/system', systemRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/external', externalRoutes);
@@ -165,7 +166,6 @@ app.use('/api/teams', teamRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/payroll', payrollRoutes);
-app.use('/api/attendance', attendanceRoutes);
 
 app.get('/', (req, res) => {
   res.status(200).send('🚀 Bá Thành backend is running.');
@@ -191,7 +191,6 @@ mongoose
 
     await initRevenueDeductions();
     await initSalarySettings();
-    await initAttendanceSettings();
     await initSystemSettings();
     await startCollectionTrim();
     startManualJobCleanup();

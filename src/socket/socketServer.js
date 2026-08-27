@@ -10,7 +10,6 @@ const {
 } = require('./onlineClients');
 
 let io = null;
-const isProd = process.env.NODE_ENV === 'production';
 
 const sanitizePath = (value) => {
   const text = String(value || '').trim().slice(0, 200);
@@ -82,21 +81,14 @@ const initializeSocket = (httpServer) => {
       lastSeenAt: now,
     });
 
-    if (!isProd) {
-      console.log(`Socket connected: ${user.fullName || user.id} (${socket.id})`);
-    }
-
     socket.on('client:presence', (payload = {}) => {
       updateClientPresence(socket.id, {
         currentPath: sanitizePath(payload.currentPath),
       });
     });
 
-    socket.on('disconnect', (reason) => {
+    socket.on('disconnect', () => {
       removeClient(socket.id);
-      if (!isProd) {
-        console.log(`Socket disconnected: ${socket.id} (${reason})`);
-      }
     });
   });
 
