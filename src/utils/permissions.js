@@ -25,7 +25,6 @@ const PERMISSION_CATALOG = [
   { key: 'teams.manage', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'reports.revenue', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'reports.dashboard', defaultRoles: ['admin'] },
-  { key: 'reports.dashboard', defaultRoles: ['admin'] },
   { key: 'reports.praise', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'reports.warning', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'system.locations', defaultRoles: ['admin'] },

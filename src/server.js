@@ -19,6 +19,7 @@ const systemRoutes = require('./routes/systemRoutes');
 const documentImageRoutes = require('./routes/documentImageRoutes');
 const insuranceRoutes = require('./routes/insuranceRoutes');
 const { hanghoaRouter, xeRouter } = require('./routes/hanghoaXuatKhoRoutes');
+const labelRoutes = require('./routes/labelRoutes');
 const { corsOptions } = require('./config/cors');
 const { forceHttps } = require('./middleware/forceHttps');
 const { initializeSocket } = require('./socket/socketServer');
@@ -164,6 +165,7 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/insurance', insuranceRoutes);
 app.use('/api/teams', teamRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/labels', labelRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/payroll', payrollRoutes);
 

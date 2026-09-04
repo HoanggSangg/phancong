@@ -32,7 +32,6 @@ const {
 } = require('../utils/workerStatus');
 const { getKtvWorkerId, assertKtvOwnsCar } = require('../utils/ktvScope');
 const { isKtvLike } = require('../utils/permissions');
-const OperationLog = require('../models/OperationLog');
 const {
   normalizeROFields,
   buildDuplicateROFilter,

@@ -32,7 +32,6 @@ async function main() {
   console.log(`  Car: delivered >${summary.deliveredCarMonths} tháng, max ${summary.carMax}`);
   console.log(`  RepairOrderItem: max ${summary.repairItemMax}`);
   console.log(`  OperationLog: >${summary.operationLogDays} ngày`);
-  console.log(`  KtvMessage: >${summary.ktvMessageDays} ngày, max ${summary.ktvMessageMax}`);
   console.log(`  Bỏ qua: ${summary.skip.join(', ')}\n`);
 
   const results = await trimAllCollections({ dryRun: !APPLY });

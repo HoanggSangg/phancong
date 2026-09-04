@@ -1,5 +1,5 @@
 const axios = require('axios');
-const OperationLog = require('../models/OperationLog');
+const { createManualOperationLog } = require('../utils/createManualOperationLog');
 const RoPartExport = require('../models/RoPartExport');
 
 const EXTERNAL_BASE = 'http://local.otobathanh.vn/api';
@@ -233,7 +233,7 @@ const writeXuatKhoLog = async ({ req, payload, result, error } = {}) => {
     }),
   ].filter(Boolean);
 
-  return OperationLog.create({
+  return createManualOperationLog({
     user: user?._id || null,
     username: user?.username || '',
     fullName: user?.fullName || 'Khách (tải ảnh)',

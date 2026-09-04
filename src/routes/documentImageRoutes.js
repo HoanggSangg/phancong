@@ -3,11 +3,10 @@ const https = require('https');
 const { URL } = require('url');
 const express = require('express');
 const axios = require('axios');
-const jwt = require('jsonwebtoken');
-const { authenticate, access, JWT_SECRET } = require('../middleware/auth');
-const OperationLog = require('../models/OperationLog');
+const { authenticate, access } = require('../middleware/auth');
+const { optionalAuthenticate } = require('../middleware/optionalAuth');
+const { createManualOperationLog } = require('../utils/createManualOperationLog');
 const Car = require('../models/Car');
-const User = require('../models/User');
 
 const router = express.Router();
 
@@ -146,7 +145,7 @@ const writeDocumentImageLog = async ({ req, action, soChungTu, fileName = '' }) 
     ? `${user.fullName || user.username || 'User'}: ${actionLabel} ${kindLabel} «${safeFileName}» — ${targetLabel}`
     : `${user.fullName || user.username || 'User'}: ${actionLabel} ${kindLabel} — ${targetLabel}`;
 
-  return OperationLog.create({
+  return createManualOperationLog({
     user: user._id,
     username: user.username || '',
     fullName: user.fullName || '',
@@ -172,27 +171,6 @@ const writeDocumentImageLog = async ({ req, action, soChungTu, fileName = '' }) 
       details,
     },
   });
-};
-
-/** Gắn req.user nếu có token hợp lệ — không chặn khi thiếu / sai token (API công khai). */
-const optionalAuthenticate = async (req, _res, next) => {
-  try {
-    const header = req.headers.authorization || '';
-    let token = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!token && req.query?.access_token) {
-      token = String(req.query.access_token).trim();
-    }
-    if (!token) return next();
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
-    if (user?.isActive) {
-      req.user = user;
-    }
-  } catch {
-    // bỏ qua — vẫn cho dùng API công khai
-  }
-  return next();
 };
 
 const handleContext = async (req, res) => {

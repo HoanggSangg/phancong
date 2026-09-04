@@ -10,7 +10,7 @@ const { getTrimUsage } = require('../utils/trimCollections');
 const { getCleanupHour } = require('../utils/manualJobCleanup');
 const { getOnlineClientsSnapshot } = require('../socket/onlineClients');
 const { getIO } = require('../socket/socketServer');
-const OperationLog = require('../models/OperationLog');
+const { createManualOperationLog } = require('../utils/createManualOperationLog');
 const User = require('../models/User');
 
 const publishRateByUser = new Map();
@@ -227,7 +227,7 @@ const publishUpdate = async (req, res) => {
       console.error('Publish update emit failed:', emitErr.message);
     }
 
-    OperationLog.create({
+    createManualOperationLog({
       user: req.user?._id || null,
       username: req.user?.username || '',
       fullName: req.user?.fullName || '',
