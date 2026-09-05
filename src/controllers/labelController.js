@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const { createManualOperationLog } = require('../utils/createManualOperationLog');
 const QrLabel = require('../models/QrLabel');
 
@@ -214,7 +215,49 @@ const listLabelHistory = async (req, res) => {
   }
 };
 
+const collectDeleteIds = (raw) => [...new Set(
+  (Array.isArray(raw) ? raw : [])
+    .map((id) => String(id || '').trim())
+    .filter((id) => mongoose.isValidObjectId(id)),
+)];
+
+const deleteLabelHistory = async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: 'Tem không hợp lệ.' });
+    }
+    const deleted = await QrLabel.findByIdAndDelete(id).lean();
+    if (!deleted) {
+      return res.status(404).json({ message: 'Không tìm thấy tem.' });
+    }
+    return res.json({ ok: true, deleted: 1, id: deleted._id });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Không xóa được tem.' });
+  }
+};
+
+const deleteLabelHistoryBulk = async (req, res) => {
+  try {
+    const all = Boolean(req.body?.all);
+    if (all) {
+      const result = await QrLabel.deleteMany({});
+      return res.json({ ok: true, deleted: result.deletedCount || 0 });
+    }
+    const ids = collectDeleteIds(req.body?.ids);
+    if (!ids.length) {
+      return res.status(400).json({ message: 'Chưa chọn tem để xóa.' });
+    }
+    const result = await QrLabel.deleteMany({ _id: { $in: ids } });
+    return res.json({ ok: true, deleted: result.deletedCount || 0 });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Không xóa được danh sách tem.' });
+  }
+};
+
 module.exports = {
   logLabelPrint,
   listLabelHistory,
+  deleteLabelHistory,
+  deleteLabelHistoryBulk,
 };
