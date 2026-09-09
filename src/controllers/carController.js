@@ -1589,33 +1589,6 @@ const fetchRepairItemsForCar = async (carId) => {
     .map(enrichRepairItemCost);
 };
 
-const deliverCarAndFreeWorkers = async (carId) => {
-  const car = await Car.findById(carId);
-  if (!car) return null;
-
-  const carWorkerIds = extractWorkerIds(car.workers);
-  const repairItems = await RepairOrderItem.find({ car: carId })
-    .select('workerAssignments.worker worker')
-    .lean();
-
-  const repairWorkerIds = extractWorkerIds(
-    (repairItems || []).flatMap((item) => {
-      if (Array.isArray(item.workerAssignments) && item.workerAssignments.length > 0) {
-        return item.workerAssignments;
-      }
-      return item.worker ? [{ worker: item.worker }] : [];
-    })
-  );
-
-  if (car.status !== 'delivered') {
-    car.status = 'delivered';
-    await car.save();
-  }
-
-  await syncWorkersForCar(carId, [...carWorkerIds, ...repairWorkerIds]);
-  return populateCarWorkers(carId);
-};
-
 const assignRepairItemWorkers = async (req, res) => {
   try {
     await getRevenueDeductions();
@@ -1707,9 +1680,8 @@ const assignRepairItemWorkers = async (req, res) => {
     };
 
     const items = await fetchRepairItemsForCar(id);
-    const deliveredCar = await deliverCarAndFreeWorkers(id);
 
-    return res.json({ items, car: deliveredCar });
+    return res.json({ items, car: await populateCarWorkers(id) });
   } catch (error) {
     console.error('Lỗi phân công thợ cho hạng mục:', error);
     return res.status(500).json({ message: error.message });
@@ -1877,9 +1849,8 @@ const saveManualRepairItems = async (req, res) => {
     };
 
     const items = await fetchRepairItemsForCar(id);
-    const deliveredCar = await deliverCarAndFreeWorkers(id);
 
-    return res.json({ items, car: deliveredCar });
+    return res.json({ items, car: await populateCarWorkers(id) });
   } catch (error) {
     console.error('Lỗi lưu công việc ngoài báo giá:', error);
     return res.status(500).json({ message: error.message });
