@@ -78,6 +78,9 @@ const ROUTE_RULES = [
   { pattern: /^\/api\/teams\/[^/]+$/, method: 'DELETE', action: 'delete', module: 'team', label: 'Xóa tổ' },
   { pattern: /^\/api\/teams\/[^/]+\/workers$/, method: 'POST', action: 'add_member', module: 'team', label: 'Thêm thợ vào tổ' },
   { pattern: /^\/api\/teams\/[^/]+\/workers\/[^/]+$/, method: 'DELETE', action: 'remove_member', module: 'team', label: 'Xóa thợ khỏi tổ' },
+  { pattern: /^\/api\/worker-groups$/, method: 'POST', action: 'create', module: 'workerGroup', label: 'Tạo nhóm thợ' },
+  { pattern: /^\/api\/worker-groups\/[^/]+$/, method: 'PUT', action: 'update', module: 'workerGroup', label: 'Cập nhật nhóm thợ' },
+  { pattern: /^\/api\/worker-groups\/[^/]+$/, method: 'DELETE', action: 'delete', module: 'workerGroup', label: 'Xóa nhóm thợ' },
 ];
 
 const sanitizePayload = (payload) => {
@@ -686,6 +689,30 @@ const buildDetailedDescription = async ({
       const teamName = await resolveTeamName(params.teamId);
       const workerName = await resolveWorkerName(params.workerId);
       description = `Xóa thợ ${workerName} khỏi tổ ${teamName}`;
+      break;
+    }
+
+    case 'workerGroup:create': {
+      const name = body.name || entity?.name || '—';
+      description = `Tạo nhóm thợ "${name}"`;
+      if (Array.isArray(body.members)) details.push(`${body.members.length} thợ trong nhóm`);
+      break;
+    }
+
+    case 'workerGroup:update': {
+      const name = targetLabel || body.name || params.id;
+      description = `Cập nhật nhóm thợ "${name}"`;
+      if (body.name) details.push(`Tên mới: ${body.name}`);
+      if (Array.isArray(body.members)) details.push(`${body.members.length} thợ trong nhóm`);
+      break;
+    }
+
+    case 'workerGroup:delete': {
+      const name = getAuditLabel(req, targetLabel || params.id);
+      description = `Xóa nhóm thợ "${name}"`;
+      if (req.auditDeleted?.memberCount) {
+        details.push(`${req.auditDeleted.memberCount} thợ trong nhóm`);
+      }
       break;
     }
 

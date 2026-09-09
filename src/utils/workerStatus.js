@@ -41,7 +41,7 @@ const getAssignedCarsForWorker = async (workerId) => {
   if (!query) return [];
 
   return Car.find(query)
-    .select('status plateNumber')
+    .select('status plateNumber workers.worker workers.role roNumber roCode roKey currentDate externalCarTypeName')
     .lean();
 };
 
@@ -149,7 +149,7 @@ const evaluateWorkersAvailabilityBatch = async (workers = []) => {
       { 'workers.worker': { $in: ids.map(String) } },
     ],
   })
-    .select('status plateNumber workers.worker')
+    .select('status plateNumber workers.worker workers.role roNumber roCode roKey currentDate externalCarTypeName')
     .lean();
 
   const carsByWorker = new Map();

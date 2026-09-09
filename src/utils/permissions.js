@@ -23,6 +23,7 @@ const PERMISSION_CATALOG = [
   { key: 'workers.available', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'workers.repair-history', defaultRoles: ['admin', 'giam_sat', 'ktv', 'lai_xe', 'kho', 'cvdv'] },
   { key: 'teams.manage', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
+  { key: 'worker-groups.manage', defaultRoles: ['admin'] },
   { key: 'reports.revenue', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },
   { key: 'reports.dashboard', defaultRoles: ['admin'] },
   { key: 'reports.praise', defaultRoles: ['admin', 'giam_sat', 'cvdv'] },

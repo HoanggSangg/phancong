@@ -2,6 +2,7 @@ const User = require('../models/User');
 const Worker = require('../models/Worker');
 const { signToken, sanitizeUser } = require('../middleware/auth');
 const { sanitizePermissions } = require('../utils/permissions');
+const { validateGiamSatWorkerLink } = require('../utils/teamScope');
 
 const register = async (req, res) => {
   try {
@@ -91,7 +92,13 @@ const getMe = async (req, res) => {
 
 const getUsers = async (req, res) => {
   try {
-    const users = await User.find().populate('worker', 'name soBaoDanh').sort({ createdAt: -1 });
+    const users = await User.find()
+      .populate({
+        path: 'worker',
+        select: 'name soBaoDanh team teamRole',
+        populate: { path: 'team', select: 'name' },
+      })
+      .sort({ createdAt: -1 });
     return res.json(users.map(sanitizeUser));
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -111,13 +118,17 @@ const createUser = async (req, res) => {
       return res.status(400).json({ message: 'Tên đăng nhập đã tồn tại' });
     }
 
-    let worker = null;
+    let linkedWorker = null;
     if (workerId) {
-      const linkedWorker = await Worker.findById(workerId);
+      linkedWorker = await Worker.findById(workerId);
       if (!linkedWorker) {
         return res.status(400).json({ message: 'Thợ liên kết không tồn tại' });
       }
-      worker = linkedWorker._id;
+    }
+
+    const linkError = validateGiamSatWorkerLink(role || 'ktv', linkedWorker);
+    if (linkError) {
+      return res.status(400).json({ message: linkError });
     }
 
     const user = await User.create({
@@ -125,7 +136,7 @@ const createUser = async (req, res) => {
       password,
       fullName: fullName.trim(),
       role: role || 'ktv',
-      worker,
+      worker: linkedWorker?._id || null,
       isActive: isActive !== false,
       permissions: sanitizePermissions(permissions || []),
     });
@@ -153,14 +164,21 @@ const updateUser = async (req, res) => {
     if (role) user.role = role;
     if (typeof isActive === 'boolean') user.isActive = isActive;
 
+    let linkedWorker = user.worker ? await Worker.findById(user.worker) : null;
     if (workerId === null || workerId === '') {
+      linkedWorker = null;
       user.worker = null;
     } else if (workerId) {
-      const linkedWorker = await Worker.findById(workerId);
+      linkedWorker = await Worker.findById(workerId);
       if (!linkedWorker) {
         return res.status(400).json({ message: 'Thợ liên kết không tồn tại' });
       }
       user.worker = linkedWorker._id;
+    }
+
+    const linkError = validateGiamSatWorkerLink(user.role, linkedWorker);
+    if (linkError) {
+      return res.status(400).json({ message: linkError });
     }
 
     if (password) {

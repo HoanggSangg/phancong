@@ -174,10 +174,14 @@ const buildHistorySummary = (docs) => {
         ten: line.ten,
         donViTinh: line.donViTinh,
         soLuong: 0,
+        lastExportedAt: null,
       };
       prev.soLuong += Number(line.soLuong) || 0;
       prev.ten = prev.ten || line.ten;
       prev.ma = prev.ma || line.ma;
+      if (!prev.lastExportedAt && doc.createdAt) {
+        prev.lastExportedAt = doc.createdAt;
+      }
       byKhoa.set(key, prev);
     });
   });

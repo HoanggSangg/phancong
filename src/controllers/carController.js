@@ -3,6 +3,7 @@ const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
 const RepairOrderItem = require('../models/RepairOrderItem');
 const Location = require('../models/Location');
+const OperationLog = require('../models/OperationLog');
 const { fetchRepairDetailsForCar, fetchVehicleInfo } = require('./externalController');
 const moment = require('moment-timezone');
 const {
@@ -14,7 +15,7 @@ const {
   getItemRevenueDate,
 } = require('../utils/revenue');
 const {
-  repairItemsForWorkerQuery,
+  repairItemsForWorkersQuery,
   buildCountRevenueMap,
   resolveRepairHistoryWorkerFilter,
 } = require('../utils/revenueHelpers');
@@ -58,7 +59,7 @@ const CAR_LIST_POPULATE = [
 ];
 
 /** Payload gọn cho trang phân công thợ (WokerAssignment) */
-const CAR_ASSIGNMENT_SELECT = 'plateNumber status workers.worker workers.role roNumber roCode currentDate';
+const CAR_ASSIGNMENT_SELECT = 'plateNumber status workers.worker workers.role roNumber roCode roKey currentDate externalCarTypeName';
 const CAR_ASSIGNMENT_POPULATE = [
   { path: 'workers.worker', select: 'name' },
 ];
@@ -930,7 +931,12 @@ const getWorkingAndPendingCars = async (req, res) => {
 
     const filter = { status: { $in: statuses } };
     if (req.query.date) {
-      filter.currentDate = String(req.query.date);
+      const day = String(req.query.date);
+      const activeStatuses = statuses.filter((status) => status !== 'delivered');
+      filter.$or = [
+        { currentDate: day },
+        { isLate: true, status: { $in: activeStatuses } },
+      ];
     }
 
     const cars = await findCarsForList(filter);
@@ -1177,6 +1183,29 @@ const getCarWorkersHistory = async (req, res) => {
     const additionalRepairLogs = historyLogs.filter(log => log.phase === 'additional_repair');
     const otherLogs = historyLogs.filter(log => log.phase === 'other');
 
+    const carId = String(car._id);
+    const plate = String(car.plateNumber || '').trim().toUpperCase();
+    const operationFilter = {
+      $or: [
+        { targetId: carId },
+        { 'metadata.carId': carId },
+        { 'metadata.params.id': carId },
+      ],
+    };
+    if (plate) {
+      operationFilter.$or.push(
+        { targetLabel: plate },
+        { 'metadata.plateNumber': plate },
+        { 'metadata.body.plateNumber': plate },
+      );
+    }
+
+    const operationLogs = await OperationLog.find(operationFilter)
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .select('fullName username role action module targetLabel description metadata createdAt')
+      .lean();
+
     return res.status(200).json({
       success: true,
       message: 'Lấy lịch sử sửa, rửa và giao xe thành công',
@@ -1187,6 +1216,7 @@ const getCarWorkersHistory = async (req, res) => {
         currentWorkers,
 
         historyLogs,
+        operationLogs,
 
         groupedHistory: {
           repair: repairLogs,
@@ -1214,18 +1244,18 @@ const getRepairHistory = async (req, res) => {
 
     const { date, from, to, workerId: queryWorkerId } = req.query;
 
-    const workerScope = resolveRepairHistoryWorkerFilter(req, queryWorkerId);
+    const workerScope = await resolveRepairHistoryWorkerFilter(req, queryWorkerId);
     if (workerScope.blocked) {
       return res.json({ totalRevenue: 0, revenueBeforeCommission: 0, items: [] });
     }
 
-    const workerFilter = workerScope.workerId;
+    const scopedWorkerIds = workerScope.workerIds;
     const rangeFrom = from || date;
     const rangeTo = to || date;
 
     const clauses = [];
-    if (workerFilter) {
-      clauses.push(repairItemsForWorkerQuery(workerFilter));
+    if (scopedWorkerIds) {
+      clauses.push(repairItemsForWorkersQuery(scopedWorkerIds));
     }
 
     // Đẩy khoảng ngày xuống Mongo (vẫn filter chính xác theo getItemRevenueDate ở dưới)
@@ -1299,10 +1329,9 @@ const getRepairHistory = async (req, res) => {
         };
       });
 
-      const visibleAssignments = workerFilter
-        ? mappedAssignments.filter(
-          (assignment) => String(assignment.workerId) === workerFilter
-        )
+      const scopedSet = scopedWorkerIds ? new Set(scopedWorkerIds.map(String)) : null;
+      const visibleAssignments = scopedSet
+        ? mappedAssignments.filter((assignment) => scopedSet.has(String(assignment.workerId)))
         : mappedAssignments;
 
       return {
@@ -1321,10 +1350,10 @@ const getRepairHistory = async (req, res) => {
         costAmount: Number(item.costAmount || 0),
         amount: Number(item.amount || 0),
         assignments: visibleAssignments,
-        allAssignments: isKtvLike(req.user) ? undefined : mappedAssignments,
+        allAssignments: isKtvLike(req.user) || req.user?.role === 'giam_sat' ? undefined : mappedAssignments,
         createdAt: item.createdAt,
       };
-    }).filter((item) => item.assignments.length > 0 || !workerFilter);
+    }).filter((item) => item.assignments.length > 0 || !scopedWorkerIds);
 
     const sumRevenue = (targetItems, field = 'revenue') =>
       targetItems.reduce(
@@ -1560,6 +1589,33 @@ const fetchRepairItemsForCar = async (carId) => {
     .map(enrichRepairItemCost);
 };
 
+const deliverCarAndFreeWorkers = async (carId) => {
+  const car = await Car.findById(carId);
+  if (!car) return null;
+
+  const carWorkerIds = extractWorkerIds(car.workers);
+  const repairItems = await RepairOrderItem.find({ car: carId })
+    .select('workerAssignments.worker worker')
+    .lean();
+
+  const repairWorkerIds = extractWorkerIds(
+    (repairItems || []).flatMap((item) => {
+      if (Array.isArray(item.workerAssignments) && item.workerAssignments.length > 0) {
+        return item.workerAssignments;
+      }
+      return item.worker ? [{ worker: item.worker }] : [];
+    })
+  );
+
+  if (car.status !== 'delivered') {
+    car.status = 'delivered';
+    await car.save();
+  }
+
+  await syncWorkersForCar(carId, [...carWorkerIds, ...repairWorkerIds]);
+  return populateCarWorkers(carId);
+};
+
 const assignRepairItemWorkers = async (req, res) => {
   try {
     await getRevenueDeductions();
@@ -1651,8 +1707,9 @@ const assignRepairItemWorkers = async (req, res) => {
     };
 
     const items = await fetchRepairItemsForCar(id);
+    const deliveredCar = await deliverCarAndFreeWorkers(id);
 
-    return res.json(items);
+    return res.json({ items, car: deliveredCar });
   } catch (error) {
     console.error('Lỗi phân công thợ cho hạng mục:', error);
     return res.status(500).json({ message: error.message });
@@ -1820,7 +1877,9 @@ const saveManualRepairItems = async (req, res) => {
     };
 
     const items = await fetchRepairItemsForCar(id);
-    return res.json(items);
+    const deliveredCar = await deliverCarAndFreeWorkers(id);
+
+    return res.json({ items, car: deliveredCar });
   } catch (error) {
     console.error('Lỗi lưu công việc ngoài báo giá:', error);
     return res.status(500).json({ message: error.message });
@@ -1957,9 +2016,22 @@ const syncCarFromExternal = async (req, res) => {
   }
 };
 
+const getManageCarsFilters = async (_req, res) => {
+  try {
+    const [locations, supervisors] = await Promise.all([
+      Location.find().sort({ createdAt: -1 }).lean(),
+      Supervisor.find().lean(),
+    ]);
+    return res.json({ locations, supervisors });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Không tải được bộ lọc xe' });
+  }
+};
+
 module.exports = {
   getAllCars,
   getManageCarsList,
+  getManageCarsFilters,
   getCarById,
   createCar,
   updateCar,

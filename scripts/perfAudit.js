@@ -16,24 +16,18 @@ const pages = [
     name: 'Home /cars (dashboard)',
     calls: [
       { method: 'GET', path: '/api/cars/working-pending' },
-      { method: 'GET', path: '/api/cars/overdue' },
-      { method: 'GET', path: '/api/locations' },
     ],
   },
   {
     name: 'ManageCars',
     calls: [
       { method: 'GET', path: '/api/cars/manage-list?page=1&limit=50&statusFilter=not_delivered' },
-      { method: 'GET', path: '/api/locations' },
-      { method: 'GET', path: '/api/supervisors' },
-      { method: 'GET', path: '/api/worker/available' },
     ],
   },
   {
     name: 'WokerAssignment',
     calls: [
-      { method: 'GET', path: '/api/cars?statusFilter=not_delivered' },
-      { method: 'GET', path: '/api/worker' },
+      { method: 'GET', path: '/api/worker?includeCars=1' },
     ],
   },
   {

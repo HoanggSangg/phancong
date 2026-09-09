@@ -4,6 +4,7 @@ const Car = require('../models/Car');
 const RepairOrderItem = require('../models/RepairOrderItem');
 const cloudinary = require('../cloudinary');
 const { isKtvLike } = require('../utils/permissions');
+const { getOutsideWorkerScopeMessage, wantsTeamScope, resolveGiamSatTeamQuery, getLinkedWorkerId } = require('../utils/teamScope');
 const {
   resolveDateRange,
   toDateBounds,
@@ -19,6 +20,7 @@ const {
 const {
   applyDeductionsToGross,
   getRevenueDeductions,
+  getCachedRevenueBase,
 } = require('../utils/revenueDeductions');
 const { evaluateWorkerAvailability, evaluateWorkersAvailabilityBatch, syncWorkerStatus } = require('../utils/workerStatus');
 
@@ -36,6 +38,8 @@ const uploadImage = async (image) => {
 // Lấy tất cả thợ
 const getAllWorkers = async (req, res) => {
   try {
+    const includeCars = req.query.includeCars === '1';
+
     if (isKtvLike(req.user)) {
       if (!req.user.worker) {
         return res.status(200).json([]);
@@ -54,10 +58,16 @@ const getAllWorkers = async (req, res) => {
         busyCarsCount: availability.busyCarsCount,
         pendingCarsCount: availability.pendingCarsCount,
         hasManualJob: availability.hasManualJob,
+        ...(includeCars ? { assignedCars: availability.assignedCars || [] } : {}),
       }]);
     }
 
-    const workers = await Worker.find()
+    const teamQuery = await resolveGiamSatTeamQuery(req.user, wantsTeamScope(req));
+    if (teamQuery.empty) {
+      return res.status(200).json([]);
+    }
+
+    const workers = await Worker.find(teamQuery.filter)
       .select('-revenues')
       .populate('team', 'name')
       .sort({ createdAt: -1 })
@@ -70,6 +80,7 @@ const getAllWorkers = async (req, res) => {
         busyCarsCount: 0,
         pendingCarsCount: 0,
         hasManualJob: false,
+        assignedCars: [],
       };
 
       return {
@@ -78,6 +89,7 @@ const getAllWorkers = async (req, res) => {
         busyCarsCount: availability.busyCarsCount,
         pendingCarsCount: availability.pendingCarsCount,
         hasManualJob: availability.hasManualJob,
+        ...(includeCars ? { assignedCars: availability.assignedCars || [] } : {}),
       };
     });
 
@@ -91,7 +103,8 @@ const getAllWorkers = async (req, res) => {
 const getWorkerById = async (req, res) => {
   const { id } = req.params;
 
-  if (isKtvLike(req.user) && req.user.worker?.toString() !== id) {
+  const ownId = getLinkedWorkerId(req.user);
+  if (isKtvLike(req.user) && ownId !== String(id)) {
     return res.status(403).json({ message: 'Bạn chỉ xem được hồ sơ thợ của mình' });
   }
 
@@ -264,7 +277,12 @@ const deleteWorker = async (req, res) => {
 // Thợ đang rảnh — đọc trạng thái từ DB (được sync khi đổi trạng thái xe)
 const getAvailableWorkers = async (req, res) => {
   try {
-    const workers = await Worker.find({ status: 'available' })
+    const teamQuery = await resolveGiamSatTeamQuery(req.user, wantsTeamScope(req));
+    if (teamQuery.empty) {
+      return res.status(200).json([]);
+    }
+
+    const workers = await Worker.find({ status: 'available', ...teamQuery.filter })
       .select('-revenues')
       .populate('team', 'name')
       .sort({ createdAt: -1 })
@@ -542,12 +560,14 @@ const getWorkerRevenueChart = async (req, res) => {
     }
 
     const { fromDate, toDate } = getRevenueDateRange(from, to);
+    await getRevenueDeductions();
     const data = await buildWorkerRevenueFromRepairItems(fromDate, toDate);
 
     return res.status(200).json({
       message: 'Lấy doanh thu biểu đồ thành công',
       from,
       to,
+      revenueBase: getCachedRevenueBase(),
       data
     });
   } catch (error) {
@@ -595,6 +615,18 @@ const addManualJobToWorker = async (req, res) => {
   try {
     const { id } = req.params;
     const { content, date } = req.body;
+
+    if (isKtvLike(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ xem được công việc của mình',
+      });
+    }
+
+    const scopeError = await getOutsideWorkerScopeMessage(req.user, id);
+    if (scopeError) {
+      return res.status(403).json({ success: false, message: scopeError });
+    }
 
     if (!content || !content.trim()) {
       return res.status(400).json({
@@ -648,6 +680,18 @@ const addManualJobToWorker = async (req, res) => {
 const removeManualJobFromWorker = async (req, res) => {
   try {
     const { id, jobId } = req.params;
+
+    if (isKtvLike(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bạn chỉ xem được công việc của mình',
+      });
+    }
+
+    const scopeError = await getOutsideWorkerScopeMessage(req.user, id);
+    if (scopeError) {
+      return res.status(403).json({ success: false, message: scopeError });
+    }
 
     const workerBefore = await Worker.findById(id).select('name manualJobs');
     if (!workerBefore) {
