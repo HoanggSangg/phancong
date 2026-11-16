@@ -12,6 +12,7 @@ router.get('/manage-list', access(['admin', 'giam_sat', 'ktv'], 'cars.manage'), 
 router.get('/manage-filters', access(['admin', 'giam_sat', 'ktv'], 'cars.manage'), carController.getManageCarsFilters);
 router.get('/repair-history', access(['admin', 'giam_sat', 'ktv'], 'workers.repair-history'), carController.getRepairHistory);
 router.get('/:id/repair-items', access(['admin', 'giam_sat', 'ktv'], 'cars.manage'), carController.getCarRepairItems);
+router.put('/:id/repair-items/save', access(['admin', 'giam_sat'], 'cars.add'), carController.saveRepairAssignments);
 router.put('/:id/repair-items/assignments', access(['admin', 'giam_sat'], 'cars.add'), carController.assignRepairItemWorkers);
 router.put('/:id/repair-items/manual', access(['admin', 'giam_sat'], 'cars.add'), carController.saveManualRepairItems);
 router.get('/:id/workers/history', access(['admin', 'giam_sat'], 'cars.add'), carController.getCarWorkersHistory);

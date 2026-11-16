@@ -54,6 +54,7 @@ const hasItemWorkerAssignment = (item) =>
   (item.workerAssignments?.length > 0) || Boolean(item.worker);
 
 const getItemRevenueDate = (item, car = null) => {
+  if (item.revenueDate) return item.revenueDate;
   if (hasItemWorkerAssignment(item)) {
     return moment(item.updatedAt).tz(TIMEZONE).format('YYYY-MM-DD');
   }
@@ -63,6 +64,25 @@ const getItemRevenueDate = (item, car = null) => {
       ? moment(item.createdAt).tz(TIMEZONE).format('YYYY-MM-DD')
       : '');
 };
+
+// Keep the legacy date until the first edit persists it. New assignments use today.
+const getPinnedRevenueDate = (existing, next, now = new Date()) => {
+  if (existing?.revenueDate) return existing.revenueDate;
+  if (existing && hasItemWorkerAssignment(existing)) return getItemRevenueDate(existing);
+  return hasItemWorkerAssignment(next)
+    ? moment(now).tz(TIMEZONE).format('YYYY-MM-DD')
+    : null;
+};
+
+const revenueDateRangeQuery = (fromDate, toDate) => ({
+  $or: [
+    { revenueDate: {
+      $gte: moment(fromDate).tz(TIMEZONE).format('YYYY-MM-DD'),
+      $lte: moment(toDate).tz(TIMEZONE).format('YYYY-MM-DD'),
+    } },
+    { revenueDate: null, updatedAt: { $gte: fromDate, $lte: toDate } },
+  ],
+});
 
 const getItemRevenueBaseAmount = (item = {}) => {
   if (getCachedRevenueBase() === 'cost') {
@@ -167,6 +187,8 @@ module.exports = {
   isDateInRange,
   hasItemWorkerAssignment,
   getItemRevenueDate,
+  getPinnedRevenueDate,
+  revenueDateRangeQuery,
   getItemRevenueBaseAmount,
   calculateRevenueShare,
   getItemWorkerAssignments,

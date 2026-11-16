@@ -1,3 +1,4 @@
+const { invokeHandler, transactionalRepairHandler } = require('../utils/repairItemTransaction');
 ﻿const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
@@ -13,6 +14,7 @@ const {
   getItemWorkerAssignments,
   getRevenueForWorkerFromItem,
   getItemRevenueDate,
+  revenueDateRangeQuery,
 } = require('../utils/revenue');
 const {
   repairItemsForWorkersQuery,
@@ -1270,7 +1272,7 @@ const getRepairHistory = async (req, res) => {
 
       clauses.push({
         $or: [
-          { updatedAt: { $gte: fromDate, $lte: toDate } },
+          revenueDateRangeQuery(fromDate, toDate),
           { createdAt: { $gte: fromDate, $lte: toDate } },
           ...(carIds.length ? [{ car: { $in: carIds } }] : []),
         ],
@@ -1538,6 +1540,10 @@ const isManualRepairItemChanged = (existingItem, payload, workerEntries) => {
 
 const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, item) => {
   const workerAssignments = [];
+  const ids = workerEntries.map((entry) => String(entry.workerId));
+  if (new Set(ids).size !== ids.length || workerEntries.some((entry) => !Number.isFinite(entry.percentage) || entry.percentage < 0 || entry.percentage > 100)) {
+    throw Object.assign(new Error('Thợ không được trùng và tỷ lệ phải nằm trong khoảng 0–100%'), { status: 400 });
+  }
 
   for (const entry of workerEntries) {
     const worker = await Worker.findById(entry.workerId);
@@ -1558,7 +1564,7 @@ const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, item)
 
   const workerRevenues = workerAssignments.length > 0
     ? buildWorkerRevenuesForItem(
-      { ...item, workerAssignments },
+      { ...(item.toObject ? item.toObject() : item), workerAssignments },
       countRevenueMap
     )
     : [];
@@ -1573,8 +1579,8 @@ const buildWorkerAssignmentUpdate = async (workerEntries, countRevenueMap, item)
 
 const fetchRepairItemsForCar = async (carId) => {
   const items = await RepairOrderItem.find({ car: carId })
-    .populate('workerAssignments.worker', 'name')
-    .populate('worker', 'name')
+    .populate({ path: 'workerAssignments.worker', select: 'name', ordered: true })
+    .populate({ path: 'worker', select: 'name', ordered: true })
     .sort({ isManual: 1, groupName: 1, createdAt: 1 });
 
   const excludedIds = items
@@ -2013,8 +2019,23 @@ module.exports = {
   getOverdueCars,
   getCarWorkersHistory,
   getCarRepairItems,
-  assignRepairItemWorkers,
-  saveManualRepairItems,
+  assignRepairItemWorkers: transactionalRepairHandler((req) => invokeHandler(assignRepairItemWorkers, req)),
+  saveManualRepairItems: transactionalRepairHandler((req) => invokeHandler(saveManualRepairItems, req)),
+  saveRepairAssignments: transactionalRepairHandler(async (req) => {
+    const { assignments, manualItems } = req.body;
+    if (!Array.isArray(assignments) || (manualItems !== undefined && !Array.isArray(manualItems))) {
+      throw Object.assign(new Error('Dữ liệu phân công không hợp lệ'), { status: 400 });
+    }
+    const assignmentReq = { ...req, body: { assignments } };
+    let result = await invokeHandler(assignRepairItemWorkers, assignmentReq);
+    req.auditChanges = assignmentReq.auditChanges;
+    if (manualItems !== undefined) {
+      const manualReq = { ...req, body: { items: manualItems } };
+      result = await invokeHandler(saveManualRepairItems, manualReq);
+      req.auditChanges = { ...req.auditChanges, ...manualReq.auditChanges };
+    }
+    return result;
+  }),
   getRepairHistory,
   syncCarFromExternal,
 };

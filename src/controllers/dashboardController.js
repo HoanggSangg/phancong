@@ -6,6 +6,7 @@ const {
   resolveDateRange,
   isDateInRange,
   getItemRevenueDate,
+  revenueDateRangeQuery,
   getItemWorkerAssignments,
   getRevenueForWorkerFromItem,
   toDateBounds,
@@ -52,7 +53,7 @@ const aggregateRevenueInRange = async (from, to) => {
       },
       {
         $or: [
-          { updatedAt: { $gte: fromDate, $lte: toDate } },
+          revenueDateRangeQuery(fromDate, toDate),
           { createdAt: { $gte: fromDate, $lte: toDate } },
           ...(carIds.length ? [{ car: { $in: carIds } }] : []),
         ],

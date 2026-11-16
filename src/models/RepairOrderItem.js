@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { getPinnedRevenueDate } = require('../utils/revenue');
 
 const { Schema } = mongoose;
 
@@ -21,6 +22,7 @@ const workerAssignmentSchema = new Schema({
 }, { _id: true });
 
 const repairOrderItemSchema = new Schema({
+  revenueDate: { type: String, default: null, index: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   car: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Car',
@@ -164,6 +166,29 @@ const repairOrderItemSchema = new Schema({
 }, { timestamps: true });
 
 repairOrderItemSchema.index({ createdAt: -1 });
+
+// Pin before Mongoose changes updatedAt, including external quote synchronisation.
+repairOrderItemSchema.pre('findOneAndUpdate', async function () {
+  const query = this.model.findOne(this.getFilter()).lean();
+  const session = this.getOptions().session;
+  if (session) query.session(session);
+  const existing = await query;
+  if (!existing) return;
+  const update = this.getUpdate();
+  const next = { ...existing, ...update, ...update.$set };
+  const date = getPinnedRevenueDate(existing, next);
+  if (date) {
+    delete update.revenueDate;
+    if (update.$unset) delete update.$unset.revenueDate;
+    update.$set = { ...update.$set, revenueDate: date };
+    this.setUpdate(update);
+  }
+});
+
+repairOrderItemSchema.pre('save', async function () {
+  const existing = this.isNew ? null : await this.constructor.findById(this._id).session(this.$session()).lean();
+  this.revenueDate = getPinnedRevenueDate(existing, this);
+});
 repairOrderItemSchema.index({ updatedAt: -1 });
 repairOrderItemSchema.index({ 'workerAssignments.worker': 1, createdAt: -1 });
 repairOrderItemSchema.index({ 'workerRevenues.worker': 1 });

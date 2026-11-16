@@ -12,6 +12,7 @@ const {
   getItemWorkerAssignments,
   getRevenueForWorkerFromItem,
   getItemRevenueDate,
+  revenueDateRangeQuery,
 } = require('../utils/revenue');
 const {
   REPAIR_ITEMS_WITH_WORKERS_QUERY,
@@ -477,11 +478,11 @@ const buildWorkerRevenueFromRepairItems = async (fromDate, toDate) => {
   const fromStr = moment(fromDate).format('YYYY-MM-DD');
   const toStr = moment(toDate).format('YYYY-MM-DD');
 
-  // Item có phân công → ngày DT = updatedAt (getItemRevenueDate). Lọc DB theo updatedAt
+  // Lọc theo ngày doanh thu cố định; fallback updatedAt cho dữ liệu cũ chưa sửa.
   // rồi vẫn áp isDateInRange để giữ đúng timezone / biên ngày.
   const items = await RepairOrderItem.find({
     ...REPAIR_ITEMS_WITH_WORKERS_QUERY,
-    updatedAt: { $gte: fromDate, $lte: toDate },
+    $and: [revenueDateRangeQuery(fromDate, toDate)],
   })
     .select('-raw -workerLogs')
     .populate({
@@ -877,7 +878,7 @@ const buildWorkerKpi = async (workerId, from, to) => {
       { 'workerAssignments.worker': workerId },
       { 'workerRevenues.worker': workerId },
     ],
-    updatedAt: { $gte: fromDate, $lte: toDate },
+    $and: [revenueDateRangeQuery(fromDate, toDate)],
   })
     .select('-raw')
     .populate({

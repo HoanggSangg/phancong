@@ -57,6 +57,7 @@ const ROUTE_RULES = [
   { pattern: /^\/api\/cars$/, method: 'POST', action: 'create', module: 'car', label: 'Thêm xe' },
   { pattern: /^\/api\/cars\/[^/]+$/, method: 'PUT', action: 'update', module: 'car', label: 'Cập nhật xe' },
   { pattern: /^\/api\/cars\/[^/]+\/status$/, method: 'PUT', action: 'update_status', module: 'car', label: 'Cập nhật trạng thái xe' },
+  { pattern: /^\/api\/cars\/[^/]+\/repair-items\/save$/, method: 'PUT', action: 'save_repair', module: 'car', label: 'Lưu phân công sửa chữa' },
   { pattern: /^\/api\/cars\/[^/]+\/repair-items\/assignments$/, method: 'PUT', action: 'assign_workers', module: 'car', label: 'Phân công thợ hạng mục' },
   { pattern: /^\/api\/cars\/[^/]+\/repair-items\/manual$/, method: 'PUT', action: 'manual_items', module: 'car', label: 'Cập nhật hạng mục sửa chữa' },
   { pattern: /^\/api\/cars\/[^/]+$/, method: 'DELETE', action: 'delete', module: 'car', label: 'Xóa xe' },
@@ -494,6 +495,19 @@ const buildDetailedDescription = async ({
       break;
     }
 
+    case 'car:save_repair': {
+      const plate = await resolveCarPlate(params.id, null, body);
+      const changes = req.auditChanges || {};
+      const assignments = changes.assignments || [];
+      const manualItems = changes.manualItems || [];
+      const deletedItems = changes.deletedManualItems || [];
+      description = `Xe ${plate}: lưu phân công và công việc ngoài báo giá`;
+      details.push(...await buildRepairAssignmentDetails(assignments));
+      details.push(...await buildManualRepairAssignmentDetails(manualItems));
+      details.push(...deletedItems.map((item) => `Xóa: ${formatRepairItemLabel(item)}`));
+      break;
+    }
+
     case 'car:assign_workers': {
       const plate = await resolveCarPlate(params.id, null, body);
       const assignments = Array.isArray(req.auditChanges?.assignments)
@@ -745,6 +759,11 @@ const logOperation = async ({
   if (!user && rule.module !== 'auth') return null;
 
   if (req.auditChanges) {
+    if (rule.action === 'save_repair') {
+      const count = ['assignments', 'manualItems', 'deletedManualItems']
+        .reduce((sum, key) => sum + (req.auditChanges[key] || []).length, 0);
+      if (!count) return null;
+    }
     if (rule.action === 'assign_workers' && !(req.auditChanges.assignments || []).length) {
       return null;
     }
