@@ -1,4 +1,4 @@
-const { invokeHandler, transactionalRepairHandler } = require('../utils/repairItemTransaction');
+const { invokeHandler, prepareRepairUpdate, prepareRepairInsert, preparedRepairHandler } = require('../utils/repairItemSave');
 ﻿const Car = require('../models/Car');
 const Worker = require('../models/Worker');
 const Supervisor = require('../models/Supervisor');
@@ -1673,24 +1673,19 @@ const assignRepairItemWorkers = async (req, res) => {
         existingItem
       );
 
-      await RepairOrderItem.findOneAndUpdate(
-        { _id: assignment.itemId, car: id },
-        workerUpdate,
-        { new: true }
-      );
+      if (!areWorkerAssignmentsEqual(oldWorkers, workerEntries)) {
+        await prepareRepairUpdate(req.repairWritePlan, existingItem, workerUpdate);
+      }
     }
 
     req.auditChanges = {
       ...(req.auditChanges || {}),
       assignments: changedAssignments,
     };
-
-    const items = await fetchRepairItemsForCar(id);
-
-    return res.json({ items, car: await populateCarWorkers(id) });
+    return res.json({ prepared: true });
   } catch (error) {
     console.error('Lỗi phân công thợ cho hạng mục:', error);
-    return res.status(500).json({ message: error.message });
+    return res.status(error.status || 500).json({ message: error.message });
   }
 };
 
@@ -1812,7 +1807,9 @@ const saveManualRepairItems = async (req, res) => {
           });
         }
 
-        await RepairOrderItem.findByIdAndUpdate(itemId, payload);
+        if (isManualRepairItemChanged(existingItem, payload, workerEntries)) {
+          await prepareRepairUpdate(req.repairWritePlan, existingItem, payload);
+        }
         keptIds.push(itemId);
       } else {
         changedManualItems.push({
@@ -1824,7 +1821,7 @@ const saveManualRepairItems = async (req, res) => {
           isNew: true,
         });
 
-        const created = await RepairOrderItem.create({
+        const created = await prepareRepairInsert(req.repairWritePlan, {
           car: id,
           plateNumber: car.plateNumber,
           roCode: car.roCode || '',
@@ -1842,21 +1839,20 @@ const saveManualRepairItems = async (req, res) => {
       _id: { $nin: keptIds },
     }).select('content groupName').lean();
 
-    await RepairOrderItem.deleteMany({
-      car: id,
-      isManual: true,
-      _id: { $nin: keptIds },
-    });
+    if (deletedManualItems.length) {
+      req.repairWritePlan.push({ deleteMany: { filter: {
+        car: id,
+        isManual: true,
+        _id: { $in: deletedManualItems.map((item) => item._id) },
+      } } });
+    }
 
     req.auditChanges = {
       ...(req.auditChanges || {}),
       manualItems: changedManualItems,
       deletedManualItems,
     };
-
-    const items = await fetchRepairItemsForCar(id);
-
-    return res.json({ items, car: await populateCarWorkers(id) });
+    return res.json({ prepared: true });
   } catch (error) {
     console.error('Lỗi lưu công việc ngoài báo giá:', error);
     return res.status(500).json({ message: error.message });
@@ -2005,6 +2001,11 @@ const getManageCarsFilters = async (_req, res) => {
   }
 };
 
+const loadSavedRepairItems = async (req) => ({
+  items: await fetchRepairItemsForCar(req.params.id),
+  car: await populateCarWorkers(req.params.id),
+});
+
 module.exports = {
   getAllCars,
   getManageCarsList,
@@ -2019,9 +2020,9 @@ module.exports = {
   getOverdueCars,
   getCarWorkersHistory,
   getCarRepairItems,
-  assignRepairItemWorkers: transactionalRepairHandler((req) => invokeHandler(assignRepairItemWorkers, req)),
-  saveManualRepairItems: transactionalRepairHandler((req) => invokeHandler(saveManualRepairItems, req)),
-  saveRepairAssignments: transactionalRepairHandler(async (req) => {
+  assignRepairItemWorkers: preparedRepairHandler((req) => invokeHandler(assignRepairItemWorkers, req), loadSavedRepairItems),
+  saveManualRepairItems: preparedRepairHandler((req) => invokeHandler(saveManualRepairItems, req), loadSavedRepairItems),
+  saveRepairAssignments: preparedRepairHandler(async (req) => {
     const { assignments, manualItems } = req.body;
     if (!Array.isArray(assignments) || (manualItems !== undefined && !Array.isArray(manualItems))) {
       throw Object.assign(new Error('Dữ liệu phân công không hợp lệ'), { status: 400 });
@@ -2035,7 +2036,7 @@ module.exports = {
       req.auditChanges = { ...req.auditChanges, ...manualReq.auditChanges };
     }
     return result;
-  }),
+  }, loadSavedRepairItems),
   getRepairHistory,
   syncCarFromExternal,
 };
